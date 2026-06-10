@@ -1,0 +1,638 @@
+#!/usr/bin/env python3
+"""
+EU Qualified PDF Signature Checker (class-based)
+================================================
+For each signature in a PDF:
+  1. Extract the signer's certificate and chain          (SignedPdf)
+  2. Download the EU LOTL + national Trusted Lists and
+     collect qualified-CA certificates                    (EuTrustedListClient)
+  3. Build a trust anchor set from those certs            (ValidationContextBuilder)
+  4. Cryptographically validate each signature against
+     that trust anchor set                                (SignedPdf.validate)
+  5. Parse QCStatements to see if the signer cert is a
+     qualified natural-person e-signature                 (QcStatementParser)
+
+Usage:
+    python check_eu_signatures.py <path-to-pdf> [--hard-revocation]
+
+Requirements:
+    pip install pyhanko pyhanko-certvalidator lxml requests cryptography asn1crypto
+"""
+
+from __future__ import annotations
+
+import sys
+import base64
+import logging
+import argparse
+from pathlib import Path
+from dataclasses import dataclass, field
+from typing import Optional, Iterable
+
+import requests
+from lxml import etree
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.backends import default_backend
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Constants (OIDs, namespaces, TL service identifiers)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# id-etsi-ext-qcStatements  (RFC 3739 / ETSI EN 319 412-5)
+OID_QC_STATEMENTS = "1.3.6.1.5.5.7.1.3"
+# id-etsi-qcs-QcType: the QCStatement whose statementInfo is a SEQUENCE OF the
+# QcType OIDs below. The esign/eseal/web OIDs are *values inside* that sequence,
+# NOT statement IDs in their own right.
+OID_QC_TYPE = "0.4.0.1862.1.6"
+# QcType values (ETSI EN 319 412-5 §4.2.3) — found inside the QcType sequence
+OID_QCT_ESIGN = "0.4.0.1862.1.6.1"   # Natural person e-signature
+OID_QCT_ESEAL = "0.4.0.1862.1.6.2"   # Legal person e-seal
+OID_QCT_WEB   = "0.4.0.1862.1.6.3"   # Website authentication
+# QcCompliance – the cert is qualified (statementId, no statementInfo)
+OID_QC_COMPLIANCE = "0.4.0.1862.1.1"
+# QcSSCD – private key is in an SSCD / QSCD (statementId, no statementInfo)
+OID_QC_SSCD = "0.4.0.1862.1.4"
+
+# EU LOTL (List of Trusted Lists) – the master entry point
+DEFAULT_LOTL_URL = "https://ec.europa.eu/tools/lotl/eu-lotl.xml"
+
+# ETSI TS 119 612 namespaces
+_NS = "{http://uri.etsi.org/02231/v2#}"
+_TSLX = "{http://uri.etsi.org/02231/v2/additionaltypes#}"
+_TSL_XML_MIME = "application/vnd.etsi.tsl+xml"
+
+# A service that issues qualified certificates
+QUALIFIED_CA_SVCTYPE = "http://uri.etsi.org/TrstSvc/Svctype/CA/QC"
+# Service statuses that count as active
+GRANTED_STATUSES = {
+    "http://uri.etsi.org/TrstSvc/TrustedList/Svcstatus/granted",
+    "http://uri.etsi.org/TrstSvc/TrustedList/Svcstatus/recognisedatnationallevel",
+}
+
+
+def _cert_fingerprint(cert: x509.Certificate) -> str:
+    return cert.fingerprint(hashes.SHA256()).hex()
+
+
+def cert_subject_cn(cert: x509.Certificate) -> str:
+    try:
+        return cert.subject.get_attributes_for_oid(
+            x509.oid.NameOID.COMMON_NAME
+        )[0].value
+    except Exception:
+        return cert.subject.rfc4514_string()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Value objects
+# ══════════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class SignatureInfo:
+    """One embedded PDF signature plus its extracted certificate material."""
+    field_name: str
+    signer_cert: Optional[x509.Certificate] = None
+    chain: list[x509.Certificate] = field(default_factory=list)
+    coverage: Optional[str] = None
+    error: Optional[str] = None
+    # Kept so SignedPdf.validate() can re-run validation on this signature.
+    _embedded: object = None
+
+
+@dataclass
+class ValidationResult:
+    """Outcome of cryptographically validating one signature."""
+    valid: bool = False        # CMS signature verifies over the signed bytes
+    intact: bool = False       # document unmodified within signature coverage
+    trusted: bool = False      # a path builds+verifies to a trust anchor
+    revoked: Optional[bool] = None
+    coverage: Optional[str] = None
+    bottom_line: bool = False  # pyhanko's overall pass/fail
+    summary: str = ""
+    error: Optional[str] = None
+
+    @property
+    def cryptographically_sound(self) -> bool:
+        """Signature verifies and the document was not modified."""
+        return self.valid and self.intact
+
+
+@dataclass
+class QcInfo:
+    """Parsed id-etsi-ext-qcStatements content for a certificate."""
+    has_qc_statements: bool = False
+    qc_compliance: bool = False
+    qc_sscd: bool = False
+    qct_esign: bool = False        # natural person
+    qct_eseal: bool = False        # legal person / seal
+    qct_web: bool = False          # website authentication
+    statement_ids: list[str] = field(default_factory=list)   # top-level statement OIDs
+    qc_type_oids: list[str] = field(default_factory=list)     # OIDs inside the QcType seq
+
+    @property
+    def is_qualified_natural_person(self) -> bool:
+        return self.qc_compliance and self.qct_esign
+
+    @property
+    def is_qualified_legal_person(self) -> bool:
+        return self.qc_compliance and self.qct_eseal
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 1. PDF: extract signatures + validate them
+# ══════════════════════════════════════════════════════════════════════════════
+
+class SignedPdf:
+    """
+    Works with a single PDF: extracts embedded signatures and validates them.
+
+    pyhanko's validation re-reads document bytes, so the underlying file must
+    stay open for the lifetime of any SignatureInfo you intend to validate.
+    Use as a context manager:
+
+        with SignedPdf("doc.pdf") as pdf:
+            for sig in pdf.signatures:
+                result = pdf.validate(sig, validation_context)
+    """
+
+    def __init__(self, path: str):
+        self.path = path
+        self._fh = None
+        self._reader = None
+        self._signatures: Optional[list[SignatureInfo]] = None
+
+    # ── lifecycle ────────────────────────────────────────────────────────────
+    def open(self) -> "SignedPdf":
+        from pyhanko.pdf_utils.reader import PdfFileReader
+        if self._fh is None:
+            self._fh = open(self.path, "rb")
+            self._reader = PdfFileReader(self._fh)
+        return self
+
+    def close(self) -> None:
+        if self._fh is not None:
+            self._fh.close()
+            self._fh = None
+            self._reader = None
+
+    def __enter__(self) -> "SignedPdf":
+        return self.open()
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+    # ── extraction ───────────────────────────────────────────────────────────
+    @staticmethod
+    def _to_crypto(asn1_cert) -> x509.Certificate:
+        """Convert an asn1crypto certificate to a cryptography certificate."""
+        return x509.load_der_x509_certificate(asn1_cert.dump(), default_backend())
+
+    def _extract(self) -> list[SignatureInfo]:
+        if self._reader is None:
+            raise RuntimeError("SignedPdf is not open; call open() or use a 'with' block.")
+
+        sigs: list[SignatureInfo] = []
+        for emb in self._reader.embedded_signatures:
+            info = SignatureInfo(field_name=emb.field_name, _embedded=emb)
+            try:
+                signer = self._to_crypto(emb.signer_cert)
+                chain = [signer]
+                seen = {_cert_fingerprint(signer)}
+                for c in (emb.other_embedded_certs or []):
+                    try:
+                        cc = self._to_crypto(c)
+                        fp = _cert_fingerprint(cc)
+                        if fp not in seen:
+                            seen.add(fp)
+                            chain.append(cc)
+                    except Exception:
+                        pass
+
+                info.signer_cert = signer
+                info.chain = chain
+                try:
+                    info.coverage = str(emb.evaluate_signature_coverage())
+                except Exception:
+                    pass
+            except Exception as e:
+                info.error = str(e)
+
+            sigs.append(info)
+        return sigs
+
+    @property
+    def signatures(self) -> list[SignatureInfo]:
+        """Embedded signatures, extracted lazily and cached."""
+        if self._signatures is None:
+            self._signatures = self._extract()
+        return self._signatures
+
+    @property
+    def has_signatures(self) -> bool:
+        return len(self.signatures) > 0
+
+    # ── validation ───────────────────────────────────────────────────────────
+    def validate(self, sig: SignatureInfo, validation_context) -> ValidationResult:
+        """
+        Cryptographically validate one signature against the given pyhanko
+        ValidationContext (whose trust roots define what 'trusted' means).
+        """
+        from pyhanko.sign.validation import validate_pdf_signature
+
+        result = ValidationResult()
+        if sig._embedded is None:
+            result.error = "No embedded signature object available to validate."
+            return result
+        try:
+            st = validate_pdf_signature(sig._embedded, validation_context)
+            result.valid = bool(st.valid)
+            result.intact = bool(st.intact)
+            result.trusted = bool(st.trusted)
+            result.revoked = bool(st.revoked)
+            result.coverage = str(st.coverage)
+            result.bottom_line = bool(st.bottom_line)
+            summary = getattr(st, "summary", None)
+            result.summary = summary() if callable(summary) else str(summary)
+        except Exception as e:
+            result.error = str(e)
+        return result
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 2. EU Trusted Lists: download + cache LOTL, national TLs, qualified CA certs
+# ══════════════════════════════════════════════════════════════════════════════
+
+class EuTrustedListClient:
+    """
+    Downloads and caches the EU LOTL, the national Trusted List URLs it points
+    to, and the qualified-CA certificates contained in those national TLs.
+
+    XML documents are cached in-memory by URL, so repeated calls (or reuse of
+    the same client across multiple PDFs) don't re-download.
+    """
+
+    def __init__(self, lotl_url: str = DEFAULT_LOTL_URL,
+                 session: Optional[requests.Session] = None,
+                 timeout: int = 30, verbose: bool = True):
+        self.lotl_url = lotl_url
+        self.session = session or requests.Session()
+        self.timeout = timeout
+        self.verbose = verbose
+        self._xml_cache: dict[str, Optional[etree._Element]] = {}
+        self._national_urls: Optional[list[dict]] = None
+        self._all_certs: Optional[list[bytes]] = None
+
+    def _log(self, msg: str) -> None:
+        if self.verbose:
+            print(msg)
+
+    # ── fetching ─────────────────────────────────────────────────────────────
+    def _fetch_xml(self, url: str, label: str = "") -> Optional[etree._Element]:
+        if url in self._xml_cache:
+            return self._xml_cache[url]
+        root: Optional[etree._Element] = None
+        try:
+            self._log(f"  [fetch] {label or url}")
+            resp = self.session.get(url, timeout=self.timeout)
+            resp.raise_for_status()
+            root = etree.fromstring(resp.content)
+        except Exception as e:
+            self._log(f"  [warn] Could not fetch {url}: {e}")
+            root = None
+        self._xml_cache[url] = root
+        return root
+
+    # ── LOTL → national TL URLs ──────────────────────────────────────────────
+    def national_tl_urls(self) -> list[dict]:
+        """
+        Return [{"country": "CZ", "url": "...xtsl"}, ...].
+
+        Pointers are selected by MIME type (application/vnd.etsi.tsl+xml), not
+        file extension, because national TLs use varied extensions (.xml,
+        .xtsl, query strings). The human-readable PDF renderings are excluded.
+        """
+        if self._national_urls is not None:
+            return self._national_urls
+
+        lotl = self._fetch_xml(self.lotl_url, "EU LOTL (master list)")
+        urls: list[dict] = []
+        if lotl is not None:
+            seen: set[str] = set()
+            for ptr in lotl.iter(f"{_NS}OtherTSLPointer"):
+                loc = ptr.findtext(f"{_NS}TSLLocation")
+                if not loc:
+                    continue
+                territory = ptr.findtext(f".//{_NS}SchemeTerritory") or "??"
+                mime = ptr.findtext(f".//{_TSLX}MimeType")
+                is_xml_tl = (mime == _TSL_XML_MIME) if mime else not loc.lower().endswith(".pdf")
+                if not is_xml_tl or loc in seen:
+                    continue
+                seen.add(loc)
+                urls.append({"country": territory, "url": loc})
+
+        self._national_urls = urls
+        return urls
+
+    # ── national TL XML → qualified CA certs ─────────────────────────────────
+    @staticmethod
+    def qualified_ca_certs_from_tl(tl_root: etree._Element) -> list[bytes]:
+        """Extract DER certs for all CA/QC services with a 'granted' status."""
+        der_certs: list[bytes] = []
+        for svc in tl_root.iter(f"{_NS}TSPService"):
+            svc_type = svc.findtext(
+                f"{_NS}ServiceInformation/{_NS}ServiceTypeIdentifier"
+            )
+            if svc_type != QUALIFIED_CA_SVCTYPE:
+                continue
+            status = svc.findtext(
+                f"{_NS}ServiceInformation/{_NS}ServiceStatus"
+            )
+            if status not in GRANTED_STATUSES:
+                continue
+            for di in svc.iter(f"{_NS}DigitalId"):
+                b64 = di.findtext(f"{_NS}X509Certificate")
+                if b64:
+                    try:
+                        der_certs.append(base64.b64decode(b64.strip()))
+                    except Exception:
+                        pass
+        return der_certs
+
+    def all_qualified_ca_certs(self, countries: Optional[Iterable[str]] = None) -> list[bytes]:
+        """
+        Download every (or a filtered set of) national TL and return the union
+        of qualified-CA DER certificates. Result is cached when unfiltered.
+
+        countries: optional iterable of ISO codes (e.g. {"CZ", "DE"}) to limit
+                   which national lists are downloaded.
+        """
+        if countries is None and self._all_certs is not None:
+            return self._all_certs
+
+        wanted = {c.upper() for c in countries} if countries else None
+        certs: list[bytes] = []
+        for entry in self.national_tl_urls():
+            if wanted is not None and entry["country"].upper() not in wanted:
+                continue
+            try:
+                tl_root = self._fetch_xml(entry["url"], f"TL [{entry['country']}]")
+                if tl_root is not None:
+                    certs.extend(self.qualified_ca_certs_from_tl(tl_root))
+            except Exception as e:
+                self._log(f"  [warn] TL [{entry['country']}] failed: {e}")
+
+        if countries is None:
+            self._all_certs = certs
+        return certs
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 3. Build a pyhanko ValidationContext from trusted certificates
+# ══════════════════════════════════════════════════════════════════════════════
+
+class ValidationContextBuilder:
+    """
+    Accumulates trusted DER certificates and builds a pyhanko ValidationContext
+    that uses them as trust anchors.
+    """
+
+    def __init__(self, allow_revocation_fetch: bool = False):
+        # When True: require revocation info and fetch OCSP/CRL online
+        # (hard-fail). When False: soft-fail (don't reject if revocation info
+        # is simply unavailable / offline).
+        self.allow_revocation_fetch = allow_revocation_fetch
+        self._der_certs: list[bytes] = []
+
+    def add_certs(self, der_certs: Iterable[bytes]) -> "ValidationContextBuilder":
+        self._der_certs.extend(der_certs)
+        return self
+
+    def add_cert(self, der_cert: bytes) -> "ValidationContextBuilder":
+        self._der_certs.append(der_cert)
+        return self
+
+    @property
+    def trust_root_count(self) -> int:
+        return len(self._der_certs)
+
+    def build(self):
+        from pyhanko_certvalidator import ValidationContext
+        from asn1crypto import x509 as asn1x509
+
+        trust_roots = []
+        for der in self._der_certs:
+            try:
+                trust_roots.append(asn1x509.Certificate.load(der))
+            except Exception:
+                pass
+
+        return ValidationContext(
+            trust_roots=trust_roots,
+            revocation_mode="hard-fail" if self.allow_revocation_fetch else "soft-fail",
+            allow_fetching=self.allow_revocation_fetch,
+        )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 4. Parse QCStatements from a certificate (taken from a SignatureInfo)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class QcStatementParser:
+    """
+    Parses the id-etsi-ext-qcStatements extension (OID 1.3.6.1.5.5.7.1.3) per
+    ETSI EN 319 412-5.
+
+        QCStatements ::= SEQUENCE OF QCStatement
+        QCStatement  ::= SEQUENCE {
+            statementId   OBJECT IDENTIFIER,
+            statementInfo ANY DEFINED BY statementId OPTIONAL
+        }
+
+    Most statements (QcCompliance, QcSSCD) are identified by statementId alone.
+    The QcType statement is nested:
+
+        statementId   = 0.4.0.1862.1.6   (id-etsi-qcs-QcType)
+        statementInfo = QcType ::= SEQUENCE OF OBJECT IDENTIFIER
+
+    The esign/eseal/web OIDs (…1.6.1 / .2 / .3) are *values inside* that nested
+    sequence, NOT statement IDs — so detecting "natural person" requires opening
+    the QcType statement's statementInfo and walking its OID list.
+    """
+
+    def parse_certificate(self, cert: x509.Certificate) -> QcInfo:
+        info = QcInfo()
+        try:
+            ext = cert.extensions.get_extension_for_oid(
+                x509.ObjectIdentifier(OID_QC_STATEMENTS)
+            )
+        except x509.ExtensionNotFound:
+            return info
+
+        info.has_qc_statements = True
+        try:
+            from asn1crypto import core as asn1core
+
+            raw_value = ext.value.value  # DER of QCStatements
+            statements = asn1core.SequenceOf.load(raw_value)
+
+            for stmt in statements:
+                try:
+                    body = stmt.contents  # statementId TLV [+ statementInfo TLV]
+                    stmt_id_obj = asn1core.ObjectIdentifier.load(body)  # first TLV
+                    stmt_id = stmt_id_obj.dotted
+                    info.statement_ids.append(stmt_id)
+
+                    info_bytes = body[len(stmt_id_obj.dump()):]  # remainder
+
+                    if stmt_id == OID_QC_COMPLIANCE:
+                        info.qc_compliance = True
+                    elif stmt_id == OID_QC_SSCD:
+                        info.qc_sscd = True
+                    elif stmt_id == OID_QC_TYPE and info_bytes:
+                        self._parse_qc_type(info_bytes, info)
+                except Exception:
+                    # Skip a malformed statement, keep parsing the rest
+                    pass
+        except Exception:
+            pass
+
+        return info
+
+    @staticmethod
+    def _parse_qc_type(info_bytes: bytes, info: QcInfo) -> None:
+        """statementInfo = QcType ::= SEQUENCE OF OBJECT IDENTIFIER."""
+        from asn1crypto import core as asn1core
+        qc_types = asn1core.SequenceOf.load(info_bytes)
+        for t in qc_types:
+            try:
+                type_oid = asn1core.ObjectIdentifier.load(t.dump()).dotted
+            except Exception:
+                continue
+            info.qc_type_oids.append(type_oid)
+            if type_oid == OID_QCT_ESIGN:
+                info.qct_esign = True
+            elif type_oid == OID_QCT_ESEAL:
+                info.qct_eseal = True
+            elif type_oid == OID_QCT_WEB:
+                info.qct_web = True
+
+    def parse_signature(self, sig: SignatureInfo) -> QcInfo:
+        """Convenience: pull the signer certificate out of a SignatureInfo."""
+        if sig.signer_cert is None:
+            return QcInfo()
+        return self.parse_certificate(sig.signer_cert)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Orchestrator + CLI
+# ══════════════════════════════════════════════════════════════════════════════
+
+def check_pdf(pdf_path: str, hard_revocation: bool = False,
+              lotl_url: str = DEFAULT_LOTL_URL) -> None:
+    # Silence pyhanko's expected path-building ERROR logs for untrusted sigs.
+    logging.getLogger("pyhanko").setLevel(logging.CRITICAL)
+    logging.getLogger("pyhanko_certvalidator").setLevel(logging.CRITICAL)
+
+    print(f"\n{'='*70}")
+    print(f"  EU Qualified Signature Check")
+    print(f"  File: {pdf_path}")
+    print(f"{'='*70}\n")
+
+    qc_parser = QcStatementParser()
+
+    with SignedPdf(pdf_path) as pdf:
+        if not pdf.has_signatures:
+            print("  No signatures found in this PDF.")
+            return
+        print(f"► Found {len(pdf.signatures)} signature(s).\n")
+
+        # ── Download the EU Trusted Lists and collect qualified CA certs ─────
+        print("► Fetching EU Trusted Lists...")
+        tl_client = EuTrustedListClient(lotl_url=lotl_url)
+        national = tl_client.national_tl_urls()
+        print(f"  {len(national)} national Trusted Lists referenced.")
+        trusted_certs = tl_client.all_qualified_ca_certs()
+        print(f"  Collected {len(trusted_certs)} qualified CA certificate(s).\n")
+
+        # ── Build the validation context (TL certs as trust anchors) ─────────
+        vc = (ValidationContextBuilder(allow_revocation_fetch=hard_revocation)
+              .add_certs(trusted_certs)
+              .build())
+
+        # ── Analyse each signature ──────────────────────────────────────────
+        for sig in pdf.signatures:
+            print(f"{'─'*70}")
+            print(f"Signature field : {sig.field_name}")
+
+            if sig.error or sig.signer_cert is None:
+                print(f"  ⚠  Could not extract signer certificate: {sig.error}")
+                continue
+
+            sc = sig.signer_cert
+            print(f"  Signer CN      : {cert_subject_cn(sc)}")
+            print(f"  Issuer         : {sc.issuer.rfc4514_string()}")
+            print(f"  Valid from/to  : {sc.not_valid_before_utc} → {sc.not_valid_after_utc}")
+
+            # Cryptographic validation (signature + path to a TL trust anchor)
+            v = pdf.validate(sig, vc)
+            if v.error:
+                print(f"\n  ⚠  Validation error: {v.error}")
+            print(f"\n  Signature intact (unmodified) : {v.intact}")
+            print(f"  CMS signature cryptographically valid : {v.valid}")
+            print(f"  Chains+validates to EU TL anchor : {v.trusted}")
+            print(f"  Revoked        : {v.revoked}")
+            print(f"  Coverage       : {v.coverage}")
+
+            # QCStatements on the signer cert (parser pulls cert from the sig)
+            qc = qc_parser.parse_signature(sig)
+            print(f"\n  QCStatements present : {qc.has_qc_statements}")
+            if qc.has_qc_statements:
+                print(f"    QcCompliance (is qualified)   : {qc.qc_compliance}")
+                print(f"    QcSSCD (key in secure device) : {qc.qc_sscd}")
+                print(f"    QCType esign (natural person) : {qc.qct_esign}")
+                print(f"    QCType eseal (legal person)   : {qc.qct_eseal}")
+                print(f"    QCType web auth               : {qc.qct_web}")
+                if qc.statement_ids:
+                    print(f"    Statement IDs : {', '.join(qc.statement_ids)}")
+                if qc.qc_type_oids:
+                    print(f"    QcType values : {', '.join(qc.qc_type_oids)}")
+
+            # Final verdict
+            print()
+            fully_trusted = v.cryptographically_sound and v.trusted and not v.revoked
+            if fully_trusted and qc.is_qualified_natural_person:
+                print("  🏆 QUALIFIED ELECTRONIC SIGNATURE — natural person (eIDAS Art. 3(12))")
+            elif fully_trusted and qc.is_qualified_legal_person:
+                print("  🏆 QUALIFIED ELECTRONIC SEAL — legal person (eIDAS Art. 3(27))")
+            elif fully_trusted:
+                print("  ✅ Validates to an EU trusted CA, but cert lacks a qualified-sig QCStatement.")
+            elif v.cryptographically_sound:
+                print("  ⚠️  Cryptographically valid but does NOT chain to an EU TL anchor.")
+            else:
+                print("  ❌ Failed cryptographic validation (modified, invalid, or revoked).")
+
+    print(f"\n{'='*70}\n")
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    ap = argparse.ArgumentParser(description="Check EU qualified signatures in a PDF.")
+    ap.add_argument("pdf", help="Path to the PDF file")
+    ap.add_argument("--hard-revocation", action="store_true",
+                    help="Require revocation info (OCSP/CRL) and fetch it online "
+                         "(default: soft-fail, no network revocation check)")
+    ap.add_argument("--lotl-url", default=DEFAULT_LOTL_URL,
+                    help="Override the EU LOTL URL")
+    args = ap.parse_args(argv)
+
+    if not Path(args.pdf).exists():
+        print(f"File not found: {args.pdf}")
+        return 1
+
+    check_pdf(args.pdf, hard_revocation=args.hard_revocation, lotl_url=args.lotl_url)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
