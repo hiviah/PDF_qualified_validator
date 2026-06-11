@@ -2,3 +2,4 @@
 *.pdf.sig*
 .venv
 cache
+__pycache__
