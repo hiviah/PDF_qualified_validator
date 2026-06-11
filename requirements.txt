@@ -1,0 +1,6 @@
+pyhanko >= 0.35.1
+pyhanko-certvalidator
+endesive
+lxml
+requests
+cryptography
