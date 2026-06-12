@@ -23,7 +23,8 @@ import fitz  # PyMuPDF
 
 from qt_compat import (
     uic, QThread, pyqtSignal, QImage, QPixmap, QApplication, QMainWindow,
-    QLabel, ALIGN_HCENTER, ORIENT_VERTICAL, FORMAT_RGB888, app_exec, BINDING,
+    QLabel, QFileDialog, QMessageBox, ALIGN_HCENTER, ORIENT_VERTICAL,
+    FORMAT_RGB888, app_exec, BINDING,
 )
 from check_eu_signatures import (
     SignedPdf, EuTrustedListClient, XmlCache, ValidationContextBuilder,
@@ -31,6 +32,8 @@ from check_eu_signatures import (
 )
 
 UI_FILE = Path(__file__).with_name("signature_viewer.ui")
+
+ABOUT_TEXT = "PDF qualified signature validation from EU TL CA roots PyQt utility."
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -187,6 +190,15 @@ class PdfPageRenderer:
         self._zoom = zoom
         self.render()
 
+    def load(self, pdf_path: str) -> None:
+        """Open a different PDF and re-render the pages."""
+        try:
+            self._doc.close()
+        except Exception:
+            pass
+        self._doc = fitz.open(pdf_path)
+        self.render()
+
     def _clear(self) -> None:
         while self._layout.count():
             item = self._layout.takeAt(0)
@@ -245,6 +257,10 @@ class MainWindow(QMainWindow):
         self.actionZoomIn.triggered.connect(self._renderer.zoom_in)
         self.actionZoomOut.triggered.connect(self._renderer.zoom_out)
         self.actionRefresh.triggered.connect(self._refresh_lists)
+        # Menu actions
+        self.actionOpen.triggered.connect(self._open_pdf)
+        self.actionQuit.triggered.connect(self.close)
+        self.actionAbout.triggered.connect(self._show_about)
 
         # Dock show/hide toggles are runtime actions → append them to the toolbar
         self.mainToolBar.addSeparator()
@@ -255,6 +271,26 @@ class MainWindow(QMainWindow):
 
         if autostart:
             self.start_analysis()
+
+    # ── menu handlers ───────────────────────────────────────────────────────
+    def _open_pdf(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open PDF", str(Path(self.pdf_path).parent),
+            "PDF files (*.pdf);;All files (*)",
+        )
+        if path:
+            self.load_pdf(path)
+
+    def load_pdf(self, pdf_path: str) -> None:
+        """Switch to a different PDF: re-render pages and re-run analysis."""
+        self.pdf_path = pdf_path
+        self._renderer.load(pdf_path)
+        self.setWindowTitle(f"EU Signature Viewer ({BINDING}) — {Path(pdf_path).name}")
+        self.statusBar().showMessage(f"{self._renderer.page_count} page(s) — {BINDING}")
+        self.start_analysis()
+
+    def _show_about(self) -> None:
+        QMessageBox.about(self, "About", ABOUT_TEXT)
 
     # ── analysis lifecycle ─────────────────────────────────────────────────
     def _start_worker(self, opts: dict, busy_text: str) -> None:

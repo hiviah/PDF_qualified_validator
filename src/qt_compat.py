@@ -55,7 +55,9 @@ if BINDING == "PyQt6":
     from PyQt6 import uic
     from PyQt6.QtCore import Qt, QThread, pyqtSignal
     from PyQt6.QtGui import QImage, QPixmap
-    from PyQt6.QtWidgets import QApplication, QMainWindow, QLabel
+    from PyQt6.QtWidgets import (
+        QApplication, QMainWindow, QLabel, QFileDialog, QMessageBox,
+    )
 
     ALIGN_HCENTER = Qt.AlignmentFlag.AlignHCenter
     ORIENT_VERTICAL = Qt.Orientation.Vertical
@@ -68,7 +70,9 @@ else:  # PyQt5
     from PyQt5 import uic
     from PyQt5.QtCore import Qt, QThread, pyqtSignal
     from PyQt5.QtGui import QImage, QPixmap
-    from PyQt5.QtWidgets import QApplication, QMainWindow, QLabel
+    from PyQt5.QtWidgets import (
+        QApplication, QMainWindow, QLabel, QFileDialog, QMessageBox,
+    )
 
     ALIGN_HCENTER = Qt.AlignHCenter
     ORIENT_VERTICAL = Qt.Vertical
@@ -80,6 +84,6 @@ else:  # PyQt5
 
 __all__ = [
     "BINDING", "uic", "Qt", "QThread", "pyqtSignal", "QImage", "QPixmap",
-    "QApplication", "QMainWindow", "QLabel",
+    "QApplication", "QMainWindow", "QLabel", "QFileDialog", "QMessageBox",
     "ALIGN_HCENTER", "ORIENT_VERTICAL", "FORMAT_RGB888", "app_exec",
 ]
