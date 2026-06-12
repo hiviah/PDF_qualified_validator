@@ -3,3 +3,5 @@
 .venv
 cache
 __pycache__
+tmp
+SigViewer-x86_64.AppImage

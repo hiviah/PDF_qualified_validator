@@ -28,7 +28,7 @@ from qt_compat import (
 )
 from check_eu_signatures import (
     SignedPdf, EuTrustedListClient, XmlCache, ValidationContextBuilder,
-    QcStatementParser, cert_subject_cn, DEFAULT_LOTL_URL,
+    QcStatementParser, cert_subject_cn, DEFAULT_LOTL_URL, default_cache_dir,
 )
 
 UI_FILE = Path(__file__).with_name("signature_viewer.ui")
@@ -424,8 +424,9 @@ def main(argv: "list[str] | None" = None) -> int:
     ap.add_argument("pdf", nargs="?", default=None,
                     help="Optional path to a PDF. If omitted, the window opens "
                          "empty — use File ▸ Open or drag a PDF onto it.")
-    ap.add_argument("--cache", default="cache", metavar="DIR",
-                    help="On-disk LOTL/TL XML cache directory (default: ./cache)")
+    ap.add_argument("--cache", default=default_cache_dir(), metavar="DIR",
+                    help="On-disk LOTL/TL XML cache directory "
+                         "(default: $XDG_CACHE_HOME/sigviewer)")
     ap.add_argument("--refresh-cache", action="store_true",
                     help="Force re-download of the Trusted Lists")
     ap.add_argument("--hard-revocation", action="store_true",

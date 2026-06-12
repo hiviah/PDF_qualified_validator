@@ -22,6 +22,7 @@ Requirements:
 from __future__ import annotations
 
 import sys
+import os
 import base64
 import logging
 import argparse
@@ -59,6 +60,17 @@ OID_QC_SSCD = "0.4.0.1862.1.4"
 
 # EU LOTL (List of Trusted Lists) – the master entry point
 DEFAULT_LOTL_URL = "https://ec.europa.eu/tools/lotl/eu-lotl.xml"
+
+
+def default_cache_dir() -> str:
+    """
+    Default on-disk cache location. Uses $XDG_CACHE_HOME (or ~/.cache) so the
+    tool works when launched from a read-only mount (e.g. an AppImage) or from
+    a directory the user can't write to.
+    """
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(
+        os.path.expanduser("~"), ".cache")
+    return os.path.join(base, "sigviewer")
 
 # ETSI TS 119 612 namespaces
 _NS = "{http://uri.etsi.org/02231/v2#}"
@@ -772,9 +784,9 @@ def main(argv: Optional[list[str]] = None) -> int:
                          "(default: soft-fail, no network revocation check)")
     ap.add_argument("--lotl-url", default=DEFAULT_LOTL_URL,
                     help="Override the EU LOTL URL")
-    ap.add_argument("--cache", default="cache", metavar="DIR",
+    ap.add_argument("--cache", default=default_cache_dir(), metavar="DIR",
                     help="Directory for the on-disk LOTL/TL XML cache "
-                         "(default: ./cache)")
+                         "(default: $XDG_CACHE_HOME/sigviewer)")
     ap.add_argument("--refresh-cache", action="store_true",
                     help="Force re-download of LOTL and all TL XML, ignoring "
                          "the on-disk cache")

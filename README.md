@@ -61,3 +61,11 @@ Didn't find yet ones with signature that chains to EU TL, only private ones I ma
 Though here's a repo which will at least allow you to see signature check:
 
 https://github.com/esig/dss/tree/master/dss-pades/src/test/resources
+
+## Build into AppImage
+
+Goto `appimage/` directory. Then run:
+
+    bash build.sh
+
+AppImage with compatibility layer of Ubuntu 20.04 LTS should appear (so PyQt5)

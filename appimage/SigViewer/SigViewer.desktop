@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=SigViewer
+GenericName=EU Signature Viewer
+Exec=AppRun %f
+Icon=SigViewer
+Comment=PDF qualified signature validation from EU TL CA roots
+Categories=Office;Utility;
+Terminal=false
+MimeType=application/pdf;
