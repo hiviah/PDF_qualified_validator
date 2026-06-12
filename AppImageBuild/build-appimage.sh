@@ -3,6 +3,7 @@ set -e
 APP=SigViewer
 APPDIR=$APP.AppDir
 rm -rf "$APPDIR"; mkdir -p "$APPDIR/usr/share/sigviewer"
+APPDIR=$(realpath $APPDIR)
 
 # 0. Get python
 
@@ -24,11 +25,14 @@ cp check_eu_signatures.py qt_compat.py signature_viewer_core.py \
 )
 
 # 3. AppRun, .desktop, icon
-cp AppRun "$APPDIR/AppRun"; chmod +x "$APPDIR/AppRun"
-cp sigviewer.desktop "$APPDIR/sigviewer.desktop"
-#cp sigviewer.png "$APPDIR/sigviewer.png"
+(cd /build/AppImageBuild/ && \
+cp AppRun "$APPDIR/AppRun"; chmod +x "$APPDIR/AppRun" && \
+cp sigviewer.desktop "$APPDIR/sigviewer.desktop" && \
+cp sigviewer.png "$APPDIR/sigviewer.png"
+)
 
 # 4. Pack it
 wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
 chmod +x appimagetool-x86_64.AppImage
-./appimagetool-x86_64.AppImage --appimage-extract-and-run "$APPDIR" "$APP-x86_64.AppImage"
+./appimagetool-x86_64.AppImage --appimage-extract-and-run "$APPDIR" /build/"$APP-x86_64.AppImage"
+ls -l /build
