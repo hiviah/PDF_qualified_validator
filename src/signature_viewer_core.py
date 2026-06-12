@@ -291,6 +291,7 @@ class MainWindow(QMainWindow):
         cache_dir = self.opts.get("cache_dir") or default_cache_dir()
         self._ui_state_path = Path(cache_dir) / "ui_state.json"
         self._last_open_dir = ""
+        self._recent_files: list[str] = []   # most-recent first, max 5
 
         # PDF renderer starts empty (placeholder); a document is loaded on demand.
         self._renderer = PdfPageRenderer(self.pdfContents.layout())
@@ -323,6 +324,7 @@ class MainWindow(QMainWindow):
             self._reset_ui_state()
         else:
             self._restore_ui_state()
+        self._rebuild_recent_menu()
 
         if pdf_path:
             self.load_pdf(pdf_path, analyze=autostart)
@@ -341,6 +343,7 @@ class MainWindow(QMainWindow):
             "geometry": base64.b64encode(bytes(self.saveGeometry())).decode(),
             "state": base64.b64encode(bytes(self.saveState())).decode(),
             "last_open_dir": self._last_open_dir,
+            "recent_files": self._recent_files,
         }
         try:
             self._ui_state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -351,6 +354,7 @@ class MainWindow(QMainWindow):
     def _restore_ui_state(self) -> None:
         d = self._load_ui_state_dict()
         self._last_open_dir = d.get("last_open_dir", "") or ""
+        self._recent_files = [p for p in (d.get("recent_files") or []) if isinstance(p, str)][:5]
         try:
             if d.get("geometry"):
                 self.restoreGeometry(QByteArray(base64.b64decode(d["geometry"])))
@@ -360,13 +364,45 @@ class MainWindow(QMainWindow):
             pass
 
     def _reset_ui_state(self) -> None:
-        # Keep the remembered open-dir, but drop the saved geometry/layout so
-        # the window comes up with the .ui defaults.
-        self._last_open_dir = self._load_ui_state_dict().get("last_open_dir", "") or ""
+        # Keep the remembered open-dir and recent files (they aren't layout),
+        # but drop the saved geometry/layout so the window uses .ui defaults.
+        d = self._load_ui_state_dict()
+        self._last_open_dir = d.get("last_open_dir", "") or ""
+        self._recent_files = [p for p in (d.get("recent_files") or []) if isinstance(p, str)][:5]
         try:
             self._ui_state_path.unlink()
         except Exception:
             pass
+
+    # ── recent files ────────────────────────────────────────────────────────
+    def _add_recent(self, path: str) -> None:
+        ap = str(Path(path).expanduser().resolve())
+        self._recent_files = [p for p in self._recent_files if p != ap]
+        self._recent_files.insert(0, ap)
+        del self._recent_files[5:]          # keep at most 5
+        self._rebuild_recent_menu()
+
+    def _rebuild_recent_menu(self) -> None:
+        menu = self.menuOpenRecent
+        menu.clear()
+        if not self._recent_files:
+            menu.setEnabled(False)          # greyed-out when there's nothing
+            return
+        menu.setEnabled(True)
+        for i, path in enumerate(self._recent_files, 1):
+            # "&1  /full/path.pdf" — the digit is an Alt-accelerator.
+            act = menu.addAction(f"&{i}  {path}")
+            act.setData(path)
+            act.triggered.connect(lambda checked=False, p=path: self._open_recent(p))
+
+    def _open_recent(self, path: str) -> None:
+        if not Path(path).exists():
+            self.statusBar().showMessage(f"File no longer exists: {path}", 5000)
+            self._recent_files = [p for p in self._recent_files if p != path]
+            self._rebuild_recent_menu()
+            self._save_ui_state()
+            return
+        self.load_pdf(path)
 
     def closeEvent(self, event) -> None:
         self._save_ui_state()
@@ -422,10 +458,9 @@ class MainWindow(QMainWindow):
             self, "Open PDF", start_dir, "PDF files (*.pdf);;All files (*)",
         )
         if path:
-            # Remember the directory and persist it immediately (survives a crash).
+            # Remember the directory File ▸ Open last used.
             self._last_open_dir = str(Path(path).parent)
-            self._save_ui_state()
-            self.load_pdf(path)
+            self.load_pdf(path)   # records recent + persists state
 
     def load_pdf(self, pdf_path: str, analyze: bool = True) -> None:
         """Load a PDF: render its pages and (optionally) run signature analysis."""
@@ -433,6 +468,8 @@ class MainWindow(QMainWindow):
         self._renderer.load(pdf_path)
         self.setWindowTitle(f"EU Signature Viewer ({BINDING}) — {Path(pdf_path).name}")
         self.statusBar().showMessage(f"{self._renderer.page_count} page(s) — {BINDING}")
+        self._add_recent(pdf_path)   # update the Open Recent list
+        self._save_ui_state()        # persist recents (+ last dir + geometry)
         if analyze:
             self.start_analysis()
 
