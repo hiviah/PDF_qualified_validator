@@ -321,9 +321,9 @@ class XmlCache:
         self.verbose = verbose
         self._mem: dict[str, etree._Element] = {}
 
-    def _log(self, msg: str) -> None:
+    def _log(self, msg: str, is_error: bool = False) -> None:
         if self.verbose:
-            print(msg)
+            print(msg, file=sys.stderr if is_error else sys.stdout)
 
     # ── path layout ──────────────────────────────────────────────────────────
     def lotl_path(self) -> Path:
@@ -373,7 +373,7 @@ class XmlCache:
             resp.raise_for_status()
             return resp.content
         except Exception as e:
-            self._log(f"  [warn] Could not fetch {url}: {e}")
+            self._log(f"  [warn] Could not fetch {url}: {e}", is_error=True)
             return None
 
     @staticmethod
@@ -396,7 +396,8 @@ class XmlCache:
                     root = etree.fromstring(content)
                     self._write(path, content)  # only persist if it parses
                 except Exception as e:
-                    self._log(f"  [warn] {label}: downloaded content didn't parse: {e}")
+                    self._log(f"  [warn] {label}: downloaded content didn't parse: {e}",
+                              is_error=True)
                     root = None
             if root is None and path.exists():
                 self._log(f"  [info] {label}: using stale cached copy after fetch failure")
@@ -433,9 +434,9 @@ class EuTrustedListClient:
         self._national_urls: Optional[list[dict]] = None
         self._all_certs: Optional[list[bytes]] = None
 
-    def _log(self, msg: str) -> None:
+    def _log(self, msg: str, is_error: bool = False) -> None:
         if self.verbose:
-            print(msg)
+            print(msg, file=sys.stderr if is_error else sys.stdout)
 
     # ── LOTL → national TL URLs ──────────────────────────────────────────────
     def national_tl_urls(self) -> list[dict]:
@@ -493,28 +494,38 @@ class EuTrustedListClient:
                         pass
         return der_certs
 
-    def all_qualified_ca_certs(self, countries: Optional[Iterable[str]] = None) -> list[bytes]:
+    def all_qualified_ca_certs(self, countries: Optional[Iterable[str]] = None,
+                               progress=None) -> list[bytes]:
         """
         Resolve every (or a filtered set of) national TL and return the union
         of qualified-CA DER certificates. Result is cached when unfiltered.
 
         countries: optional iterable of ISO codes (e.g. {"CZ", "DE"}) to limit
                    which national lists are consulted.
+        progress:  optional callable(done:int, total:int, country:str) invoked
+                   before each national TL is consulted, for UI progress bars.
         """
         if countries is None and self._all_certs is not None:
             return self._all_certs
 
         wanted = {c.upper() for c in countries} if countries else None
+        entries = [e for e in self.national_tl_urls()
+                   if wanted is None or e["country"].upper() in wanted]
+        total = len(entries)
+
         certs: list[bytes] = []
-        for entry in self.national_tl_urls():
-            if wanted is not None and entry["country"].upper() not in wanted:
-                continue
+        for i, entry in enumerate(entries, 1):
+            if progress is not None:
+                try:
+                    progress(i, total, entry["country"])
+                except Exception:
+                    pass
             try:
                 tl_root = self.cache.get_national(entry["country"], entry["url"])
                 if tl_root is not None:
                     certs.extend(self.qualified_ca_certs_from_tl(tl_root))
             except Exception as e:
-                self._log(f"  [warn] TL [{entry['country']}] failed: {e}")
+                self._log(f"  [warn] TL [{entry['country']}] failed: {e}", is_error=True)
 
         if countries is None:
             self._all_certs = certs

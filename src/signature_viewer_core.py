@@ -45,11 +45,19 @@ def build_signature_report(pdf_path: str, *, cache_dir: str = "cache",
                            hard_revocation: bool = False,
                            lotl_url: str = DEFAULT_LOTL_URL,
                            do_validate: bool = True,
-                           log=lambda msg: None) -> str:
+                           log_fetch: bool = False,
+                           log=lambda msg: None,
+                           progress=lambda done, total: None) -> str:
     """
     Produce the plain-text report shown in the lower pane: for each signature,
     its certificate summary, cryptographic validation result, and parsed
-    QCStatements. `log` is an optional progress callback (str -> None).
+    QCStatements.
+
+    log:       progress-message callback (str -> None), shown in the status bar.
+    progress:  numeric progress callback (done, total) for a progress bar;
+               total == 0 signals an indeterminate/busy phase (e.g. LOTL fetch).
+    log_fetch: when True, fetch activity is printed to stdout (and fetch errors
+               to stderr) exactly as the command-line tool does.
     """
     qc_parser = QcStatementParser()
     out: list[str] = []
@@ -65,11 +73,18 @@ def build_signature_report(pdf_path: str, *, cache_dir: str = "cache",
         vc = None
         if do_validate:
             try:
+                progress(0, 0)  # indeterminate: fetching LOTL
                 log("Downloading EU Trusted Lists…")
                 cache = XmlCache(cache_dir=cache_dir, force_refresh=refresh_cache,
-                                 verbose=False)
-                client = EuTrustedListClient(lotl_url=lotl_url, cache=cache, verbose=False)
-                certs = client.all_qualified_ca_certs()
+                                 verbose=log_fetch)
+                client = EuTrustedListClient(lotl_url=lotl_url, cache=cache,
+                                             verbose=log_fetch)
+
+                def _tl_progress(done, total, country):
+                    progress(done, total)
+                    log(f"Trusted Lists: {done}/{total} ({country})")
+
+                certs = client.all_qualified_ca_certs(progress=_tl_progress)
                 vc = (ValidationContextBuilder(allow_revocation_fetch=hard_revocation)
                       .add_certs(certs).build())
                 out.append(f"(trust anchors: {len(certs)} qualified CA certs from EU TLs)")
@@ -160,7 +175,8 @@ def build_signature_report(pdf_path: str, *, cache_dir: str = "cache",
 
 class ReportWorker(QThread):
     finished_text = pyqtSignal(str)
-    progress = pyqtSignal(str)
+    progress = pyqtSignal(str)            # status-bar text
+    progress_value = pyqtSignal(int, int)  # (done, total) for the progress bar
 
     def __init__(self, pdf_path: str, opts: dict):
         super().__init__()
@@ -170,7 +186,10 @@ class ReportWorker(QThread):
     def run(self) -> None:
         try:
             text = build_signature_report(
-                self.pdf_path, log=self.progress.emit, **self.opts
+                self.pdf_path,
+                log=self.progress.emit,
+                progress=lambda done, total: self.progress_value.emit(done, total),
+                **self.opts,
             )
         except Exception as e:
             text = f"Failed to analyse signatures:\n{e}"
@@ -362,10 +381,23 @@ class MainWindow(QMainWindow):
         if not self.pdf_path:
             return  # nothing to analyse yet
         self.infoText.setPlainText(busy_text)
+        # Show an indeterminate (busy) progress bar until the first update.
+        self.progressBar.setRange(0, 0)
+        self.progressBar.setVisible(True)
         self._worker = ReportWorker(self.pdf_path, opts)
         self._worker.progress.connect(self.statusBar().showMessage)
+        self._worker.progress_value.connect(self._on_progress_value)
         self._worker.finished_text.connect(self._on_report_ready)
         self._worker.start()
+
+    def _on_progress_value(self, done: int, total: int) -> None:
+        if total <= 0:
+            # Indeterminate phase (e.g. fetching the LOTL) → busy animation.
+            self.progressBar.setRange(0, 0)
+        else:
+            self.progressBar.setRange(0, total)
+            self.progressBar.setValue(done)
+        self.progressBar.setVisible(True)
 
     def start_analysis(self) -> None:
         self._start_worker(self.opts, "Analysing signatures…")
@@ -379,6 +411,7 @@ class MainWindow(QMainWindow):
 
     def _on_report_ready(self, text: str) -> None:
         self.infoText.setPlainText(text)
+        self.progressBar.setVisible(False)
         self.statusBar().showMessage("Done", 4000)
 
 
@@ -400,6 +433,9 @@ def main(argv: "list[str] | None" = None) -> int:
     ap.add_argument("--no-validate", action="store_true",
                     help="Skip the Trusted-List download and validation "
                          "(still shows signatures + QCStatements, offline)")
+    ap.add_argument("--log-fetch", action="store_true",
+                    help="Print how the LOTL and TL XMLs are fetched to stdout "
+                         "(and fetch errors to stderr), like the CLI tool does")
     ap.add_argument("--lotl-url", default=DEFAULT_LOTL_URL, help="Override the LOTL URL")
     args = ap.parse_args(argv)
 
@@ -412,6 +448,7 @@ def main(argv: "list[str] | None" = None) -> int:
         refresh_cache=args.refresh_cache,
         hard_revocation=args.hard_revocation,
         do_validate=not args.no_validate,
+        log_fetch=args.log_fetch,
         lotl_url=args.lotl_url,
     )
 
