@@ -16,6 +16,14 @@ Outputs signatures - CN of signer - and result for each signature:
   * such CA root belongs among the EU qualified signature roots (person, seal, web is recognized now)
   * shows other OIDs found under the QcStatements extension
 
+## Disclaimer:
+
+I've read the specs, but this is still experimental. Partly done with LLM even though I
+reviewed and debugged living sh_t out of it inbetween various commits, fixed
+some mistakes it made in parsing ASN.1 structs...
+
+Bugs can happen, pretty sure there are some things that should be more verbose etc.
+
 ## Install:
 
 Python >= 3.10 is required.
