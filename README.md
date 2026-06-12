@@ -69,3 +69,11 @@ Goto `appimage/` directory. Then run:
     bash build.sh
 
 AppImage with compatibility layer of Ubuntu 20.04 LTS should appear (so PyQt5)
+
+## Main window layout and dock saving between runs
+
+Application stores state in XDG cache, usually located in `~/.cache/sigviewer`.
+
+This is a shortcut so that people can set the layout and have it permanent as
+they like. If you want to reset it for some reason, use `--reset-layout` command
+line paramater.
