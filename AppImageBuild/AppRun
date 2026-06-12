@@ -1,8 +1,8 @@
 #!/bin/bash
 HERE="$(dirname "$(readlink -f "${0}")")"
 export PYTHONHOME="$HERE/usr"
-#export PYTHONPATH="$HERE/usr/share/sigviewer:$HERE/usr/lib/python3.10/site-packages"
-export PYTHONPATH="$HERE/usr/share/sigviewer:$HERE/usr/lib/python3.14/site-packages"
+export PYTHONPATH="$HERE/usr/share/sigviewer:$HERE/usr/lib/python3.10/site-packages"
+#export PYTHONPATH="$HERE/usr/share/sigviewer:$HERE/usr/lib/python3.14/site-packages"
 export LD_LIBRARY_PATH="$HERE/usr/lib:$LD_LIBRARY_PATH"
 export SIGVIEWER_QT="PyQt5"          # bundle ships PyQt5
 exec "$HERE/usr/bin/python3" "$HERE/usr/share/sigviewer/viewer_pyqt5.py" "$@"

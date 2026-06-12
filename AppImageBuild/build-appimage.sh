@@ -6,18 +6,19 @@ rm -rf "$APPDIR"; mkdir -p "$APPDIR/usr/share/sigviewer"
 
 # 0. Get python
 
-wget https://github.com/niess/python-appimage/releases/download/python3.14/python3.14.0-cp314-cp314-manylinux2014_x86_64.AppImage
-chmod +x python3.14.0-cp314-cp314-manylinux2014_x86_64.AppImage
+#wget https://github.com/niess/python-appimage/releases/download/python3.14/python3.14.0-cp314-cp314-manylinux2014_x86_64.AppImage
+#chmod +x python3.14.0-cp314-cp314-manylinux2014_x86_64.AppImage
 
 # 1. Relocatable Python + deps into the AppDir
-./python3.14.0-cp314-cp314-manylinux2014_x86_64.AppImage -m venv "$APPDIR/usr"
+#./python3.14.0-cp314-cp314-manylinux2014_x86_64.AppImage -m venv "$APPDIR/usr"
+python3.10 -m venv "$APPDIR/usr"
 "$APPDIR/usr/bin/pip" install --upgrade pip
 "$APPDIR/usr/bin/pip" install \
     PyQt5 pymupdf cryptography lxml asn1crypto requests \
     pyhanko pyhanko-certvalidator
 
 # 2. Your application code + the shared .ui
-(cd ../src/ && \
+(cd /build/src/ && \
 cp check_eu_signatures.py qt_compat.py signature_viewer_core.py \
    viewer_pyqt5.py signature_viewer.ui  "$APPDIR/usr/share/sigviewer/"
 )
