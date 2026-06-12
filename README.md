@@ -37,3 +37,11 @@ elsewhere with `--cache` parameter. Cache is refreshed when either 24 hours pass
 or LOTL `NextUpdate` is reached or file is missing.
 
 Use `--refresh-cache` for full download of all certificates again.
+
+## Test PDF sources
+
+Didn't find yet ones with signature that chains to EU TL, only private ones I made.
+
+Though here's a repo which will at least allow you to see signature check:
+
+https://github.com/esig/dss/tree/master/dss-pades/src/test/resources
