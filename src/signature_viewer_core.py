@@ -16,14 +16,16 @@ auto-detects the binding via qt_compat.)
 from __future__ import annotations
 
 import sys
+import json
+import base64
 import argparse
 from pathlib import Path
 
 import fitz  # PyMuPDF
 
 from qt_compat import (
-    uic, QThread, pyqtSignal, QImage, QPixmap, QApplication, QMainWindow,
-    QLabel, QFileDialog, QMessageBox, QTextCursor, QTextCharFormat,
+    uic, QThread, pyqtSignal, QByteArray, QImage, QPixmap, QApplication,
+    QMainWindow, QLabel, QFileDialog, QMessageBox, QTextCursor, QTextCharFormat,
     ALIGN_HCENTER, ORIENT_VERTICAL, FORMAT_RGB888, FONT_BOLD, KEEP_ANCHOR,
     app_exec, BINDING,
 )
@@ -276,7 +278,7 @@ class PdfPageRenderer:
 
 class MainWindow(QMainWindow):
     def __init__(self, pdf_path: "str | None" = None, opts: "dict | None" = None,
-                 autostart: bool = True):
+                 autostart: bool = True, reset_layout: bool = False):
         super().__init__()
         uic.loadUi(str(UI_FILE), self)  # creates self.pdfScroll, self.infoText, actions, …
 
@@ -284,10 +286,16 @@ class MainWindow(QMainWindow):
         self.opts = opts or {}
         self._worker = None  # type: ReportWorker | None
 
+        # Persisted UI state (dock layout, window geometry, last-open dir) lives
+        # in the cache directory so it survives restarts.
+        cache_dir = self.opts.get("cache_dir") or default_cache_dir()
+        self._ui_state_path = Path(cache_dir) / "ui_state.json"
+        self._last_open_dir = ""
+
         # PDF renderer starts empty (placeholder); a document is loaded on demand.
         self._renderer = PdfPageRenderer(self.pdfContents.layout())
 
-        # Proportional initial split (runtime-only API, not expressible in .ui)
+        # Default split proportion (used unless a saved layout overrides it).
         self.resizeDocks([self.pdfDock, self.infoDock], [680, 340], ORIENT_VERTICAL)
 
         # Wire the actions declared in the .ui to logic
@@ -309,10 +317,60 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
         self.infoText.setAcceptDrops(False)
 
+        # Restore (or reset) saved geometry + dock layout. Must come after all
+        # docks/toolbars exist so restoreState() can match them by objectName.
+        if reset_layout:
+            self._reset_ui_state()
+        else:
+            self._restore_ui_state()
+
         if pdf_path:
             self.load_pdf(pdf_path, analyze=autostart)
         else:
             self._set_no_pdf_state()
+
+    # ── persisted UI state ──────────────────────────────────────────────────
+    def _load_ui_state_dict(self) -> dict:
+        try:
+            return json.loads(self._ui_state_path.read_text())
+        except Exception:
+            return {}
+
+    def _save_ui_state(self) -> None:
+        data = {
+            "geometry": base64.b64encode(bytes(self.saveGeometry())).decode(),
+            "state": base64.b64encode(bytes(self.saveState())).decode(),
+            "last_open_dir": self._last_open_dir,
+        }
+        try:
+            self._ui_state_path.parent.mkdir(parents=True, exist_ok=True)
+            self._ui_state_path.write_text(json.dumps(data, indent=2))
+        except Exception:
+            pass  # never let a cache-write failure break the app
+
+    def _restore_ui_state(self) -> None:
+        d = self._load_ui_state_dict()
+        self._last_open_dir = d.get("last_open_dir", "") or ""
+        try:
+            if d.get("geometry"):
+                self.restoreGeometry(QByteArray(base64.b64decode(d["geometry"])))
+            if d.get("state"):
+                self.restoreState(QByteArray(base64.b64decode(d["state"])))
+        except Exception:
+            pass
+
+    def _reset_ui_state(self) -> None:
+        # Keep the remembered open-dir, but drop the saved geometry/layout so
+        # the window comes up with the .ui defaults.
+        self._last_open_dir = self._load_ui_state_dict().get("last_open_dir", "") or ""
+        try:
+            self._ui_state_path.unlink()
+        except Exception:
+            pass
+
+    def closeEvent(self, event) -> None:
+        self._save_ui_state()
+        super().closeEvent(event)
 
     # ── empty state ─────────────────────────────────────────────────────────
     def _set_no_pdf_state(self) -> None:
@@ -358,11 +416,15 @@ class MainWindow(QMainWindow):
 
     # ── menu handlers ───────────────────────────────────────────────────────
     def _open_pdf(self) -> None:
-        start_dir = str(Path(self.pdf_path).parent) if self.pdf_path else ""
+        start_dir = self._last_open_dir or (
+            str(Path(self.pdf_path).parent) if self.pdf_path else "")
         path, _ = QFileDialog.getOpenFileName(
             self, "Open PDF", start_dir, "PDF files (*.pdf);;All files (*)",
         )
         if path:
+            # Remember the directory and persist it immediately (survives a crash).
+            self._last_open_dir = str(Path(path).parent)
+            self._save_ui_state()
             self.load_pdf(path)
 
     def load_pdf(self, pdf_path: str, analyze: bool = True) -> None:
@@ -454,6 +516,9 @@ def main(argv: "list[str] | None" = None) -> int:
     ap.add_argument("--log-fetch", action="store_true",
                     help="Print how the LOTL and TL XMLs are fetched to stdout "
                          "(and fetch errors to stderr), like the CLI tool does")
+    ap.add_argument("--reset-layout", action="store_true",
+                    help="Reset the window layout to default, discarding the "
+                         "saved dock arrangement and geometry")
     ap.add_argument("--lotl-url", default=DEFAULT_LOTL_URL, help="Override the LOTL URL")
     args = ap.parse_args(argv)
 
@@ -471,7 +536,7 @@ def main(argv: "list[str] | None" = None) -> int:
     )
 
     app = QApplication(sys.argv)
-    win = MainWindow(args.pdf, opts)  # args.pdf may be None → empty window
+    win = MainWindow(args.pdf, opts, reset_layout=args.reset_layout)
     win.show()
     return app_exec(app)
 
