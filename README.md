@@ -48,7 +48,7 @@ GUI versions allow file to be specified on command line, via `File->Open` or dra
 
 ## File cache for EU LOTL XML and TL XML that contain certificates
 
-Default location is `cache` in the working directory, but can be specified to be
+Default location is XDG cache, but can be specified to be
 elsewhere with `--cache` parameter. Cache is refreshed when either 24 hours pass
 or LOTL `NextUpdate` is reached or file is missing.
 
