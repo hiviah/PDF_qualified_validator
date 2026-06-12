@@ -23,8 +23,9 @@ import fitz  # PyMuPDF
 
 from qt_compat import (
     uic, QThread, pyqtSignal, QImage, QPixmap, QApplication, QMainWindow,
-    QLabel, QFileDialog, QMessageBox, ALIGN_HCENTER, ORIENT_VERTICAL,
-    FORMAT_RGB888, app_exec, BINDING,
+    QLabel, QFileDialog, QMessageBox, QTextCursor, QTextCharFormat,
+    ALIGN_HCENTER, ORIENT_VERTICAL, FORMAT_RGB888, FONT_BOLD, KEEP_ANCHOR,
+    app_exec, BINDING,
 )
 from check_eu_signatures import (
     SignedPdf, EuTrustedListClient, XmlCache, ValidationContextBuilder,
@@ -411,8 +412,24 @@ class MainWindow(QMainWindow):
 
     def _on_report_ready(self, text: str) -> None:
         self.infoText.setPlainText(text)
+        self._bold_verdict_lines()
         self.progressBar.setVisible(False)
         self.statusBar().showMessage("Done", 4000)
+
+    def _bold_verdict_lines(self) -> None:
+        """Make any line containing 'VERDICT' bold so it stands out."""
+        doc = self.infoText.document()
+        fmt = QTextCharFormat()
+        fmt.setFontWeight(FONT_BOLD)
+        block = doc.firstBlock()
+        while block.isValid():
+            if "VERDICT" in block.text():
+                cursor = QTextCursor(doc)
+                cursor.setPosition(block.position())
+                cursor.setPosition(block.position() + max(block.length() - 1, 0),
+                                   KEEP_ANCHOR)
+                cursor.mergeCharFormat(fmt)
+            block = block.next()
 
 
 # ══════════════════════════════════════════════════════════════════════════════

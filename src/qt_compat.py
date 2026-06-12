@@ -54,7 +54,9 @@ else:
 if BINDING == "PyQt6":
     from PyQt6 import uic
     from PyQt6.QtCore import Qt, QThread, pyqtSignal
-    from PyQt6.QtGui import QImage, QPixmap
+    from PyQt6.QtGui import (
+        QImage, QPixmap, QFont, QTextCursor, QTextCharFormat,
+    )
     from PyQt6.QtWidgets import (
         QApplication, QMainWindow, QLabel, QFileDialog, QMessageBox,
     )
@@ -62,6 +64,8 @@ if BINDING == "PyQt6":
     ALIGN_HCENTER = Qt.AlignmentFlag.AlignHCenter
     ORIENT_VERTICAL = Qt.Orientation.Vertical
     FORMAT_RGB888 = QImage.Format.Format_RGB888
+    FONT_BOLD = QFont.Weight.Bold
+    KEEP_ANCHOR = QTextCursor.MoveMode.KeepAnchor
 
     def app_exec(app):
         return app.exec()
@@ -69,7 +73,9 @@ if BINDING == "PyQt6":
 else:  # PyQt5
     from PyQt5 import uic
     from PyQt5.QtCore import Qt, QThread, pyqtSignal
-    from PyQt5.QtGui import QImage, QPixmap
+    from PyQt5.QtGui import (
+        QImage, QPixmap, QFont, QTextCursor, QTextCharFormat,
+    )
     from PyQt5.QtWidgets import (
         QApplication, QMainWindow, QLabel, QFileDialog, QMessageBox,
     )
@@ -77,6 +83,8 @@ else:  # PyQt5
     ALIGN_HCENTER = Qt.AlignHCenter
     ORIENT_VERTICAL = Qt.Vertical
     FORMAT_RGB888 = QImage.Format_RGB888
+    FONT_BOLD = QFont.Bold
+    KEEP_ANCHOR = QTextCursor.KeepAnchor
 
     def app_exec(app):
         return app.exec_()
@@ -84,6 +92,8 @@ else:  # PyQt5
 
 __all__ = [
     "BINDING", "uic", "Qt", "QThread", "pyqtSignal", "QImage", "QPixmap",
+    "QFont", "QTextCursor", "QTextCharFormat",
     "QApplication", "QMainWindow", "QLabel", "QFileDialog", "QMessageBox",
-    "ALIGN_HCENTER", "ORIENT_VERTICAL", "FORMAT_RGB888", "app_exec",
+    "ALIGN_HCENTER", "ORIENT_VERTICAL", "FORMAT_RGB888", "FONT_BOLD",
+    "KEEP_ANCHOR", "app_exec",
 ]
