@@ -28,15 +28,23 @@ Bugs can happen, pretty sure there are some things that should be more verbose e
 
 Python >= 3.10 is required.
 
-Install venv and add `requirements.txt` according to file:
+Install venv and add `requirements.txt` according to file.
+
+Note that you can switch PyQt5 and PyQt6 in the requirements (not sure if both can be
+installed at once).
 
     python3 -m venv .venv
     source .venv/bin/activate
     pip install -r requirements.txt
 
-## Example run (in the virtualenv):
+## Example run (in the virtualenv), in `src` dir:
 
-    python3 --hard-revocation MySigned.pdf
+    python3 ./check_eu_signatures.py --hard-revocation MySigned.pdf
+    python3 ./check_eu_signatures.py --refresh-cache MySigned.pdf
+    python3 ./viewer_qt5.py [...args...] [MySigned.pdf]
+    python3 ./viewer_qt6.py [...args...] [MySigned.pdf]
+
+GUI versions allow file to be specified on command line, via `File->Open` or drag&drop.
 
 ## File cache for EU LOTL XML and TL XML that contain certificates
 

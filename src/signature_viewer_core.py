@@ -184,18 +184,28 @@ class ReportWorker(QThread):
 class PdfPageRenderer:
     """Renders PDF pages (via PyMuPDF) as QLabels into a target QVBoxLayout."""
 
-    def __init__(self, pdf_path: str, layout, zoom: float = 1.5):
-        self._doc = fitz.open(pdf_path)
+    def __init__(self, layout, zoom: float = 1.5):
+        self._doc = None
         self._layout = layout
         self._zoom = zoom
-        self.render()
+        self.show_placeholder()
+
+    def show_placeholder(self) -> None:
+        """Empty state shown before any PDF is opened."""
+        self._clear()
+        lbl = QLabel("Open a PDF — File ▸ Open, or drag a PDF onto the window")
+        lbl.setAlignment(ALIGN_HCENTER)
+        lbl.setStyleSheet("color: gray; padding: 40px;")
+        self._layout.addWidget(lbl)
+        self._layout.addStretch(1)
 
     def load(self, pdf_path: str) -> None:
-        """Open a different PDF and re-render the pages."""
-        try:
-            self._doc.close()
-        except Exception:
-            pass
+        """Open a PDF and re-render the pages."""
+        if self._doc is not None:
+            try:
+                self._doc.close()
+            except Exception:
+                pass
         self._doc = fitz.open(pdf_path)
         self.render()
 
@@ -220,14 +230,22 @@ class PdfPageRenderer:
         self._layout.addStretch(1)
 
     @property
+    def has_doc(self) -> bool:
+        return self._doc is not None
+
+    @property
     def page_count(self) -> int:
-        return self._doc.page_count
+        return self._doc.page_count if self._doc is not None else 0
 
     def zoom_in(self) -> None:
+        if self._doc is None:
+            return
         self._zoom = min(self._zoom * 1.25, 6.0)
         self.render()
 
     def zoom_out(self) -> None:
+        if self._doc is None:
+            return
         self._zoom = max(self._zoom / 1.25, 0.25)
         self.render()
 
@@ -237,18 +255,17 @@ class PdfPageRenderer:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class MainWindow(QMainWindow):
-    def __init__(self, pdf_path: str, opts: dict, autostart: bool = True):
+    def __init__(self, pdf_path: "str | None" = None, opts: "dict | None" = None,
+                 autostart: bool = True):
         super().__init__()
         uic.loadUi(str(UI_FILE), self)  # creates self.pdfScroll, self.infoText, actions, …
 
-        self.pdf_path = pdf_path
-        self.opts = opts
+        self.pdf_path = None  # set by load_pdf()
+        self.opts = opts or {}
         self._worker = None  # type: ReportWorker | None
 
-        self.setWindowTitle(f"EU Signature Viewer ({BINDING}) — {Path(pdf_path).name}")
-
-        # PDF rendering into the layout defined in the .ui
-        self._renderer = PdfPageRenderer(pdf_path, self.pdfContents.layout())
+        # PDF renderer starts empty (placeholder); a document is loaded on demand.
+        self._renderer = PdfPageRenderer(self.pdfContents.layout())
 
         # Proportional initial split (runtime-only API, not expressible in .ui)
         self.resizeDocks([self.pdfDock, self.infoDock], [680, 340], ORIENT_VERTICAL)
@@ -267,33 +284,83 @@ class MainWindow(QMainWindow):
         self.mainToolBar.addAction(self.pdfDock.toggleViewAction())
         self.mainToolBar.addAction(self.infoDock.toggleViewAction())
 
-        self.statusBar().showMessage(f"{self._renderer.page_count} page(s) — {BINDING}")
+        # Accept PDFs dropped anywhere on the window. The read-only info pane
+        # would otherwise swallow drops, so opt it out.
+        self.setAcceptDrops(True)
+        self.infoText.setAcceptDrops(False)
 
-        if autostart:
-            self.start_analysis()
+        if pdf_path:
+            self.load_pdf(pdf_path, analyze=autostart)
+        else:
+            self._set_no_pdf_state()
+
+    # ── empty state ─────────────────────────────────────────────────────────
+    def _set_no_pdf_state(self) -> None:
+        self.pdf_path = None
+        self._renderer.show_placeholder()
+        self.setWindowTitle(f"EU Signature Viewer ({BINDING})")
+        self.infoText.setPlainText(
+            "No PDF loaded.\n\n"
+            "Open one with File ▸ Open, or drag a PDF file onto this window."
+        )
+        self.statusBar().showMessage(f"No PDF — {BINDING}")
+
+    # ── drag & drop ─────────────────────────────────────────────────────────
+    @staticmethod
+    def _first_pdf_path(mime) -> "str | None":
+        if mime is None or not mime.hasUrls():
+            return None
+        for url in mime.urls():
+            local = url.toLocalFile()
+            if local and local.lower().endswith(".pdf"):
+                return local
+        return None
+
+    def dragEnterEvent(self, event) -> None:
+        if self._first_pdf_path(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:
+        if self._first_pdf_path(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event) -> None:
+        path = self._first_pdf_path(event.mimeData())
+        if path:
+            event.acceptProposedAction()
+            self.load_pdf(path)
+        else:
+            event.ignore()
 
     # ── menu handlers ───────────────────────────────────────────────────────
     def _open_pdf(self) -> None:
+        start_dir = str(Path(self.pdf_path).parent) if self.pdf_path else ""
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open PDF", str(Path(self.pdf_path).parent),
-            "PDF files (*.pdf);;All files (*)",
+            self, "Open PDF", start_dir, "PDF files (*.pdf);;All files (*)",
         )
         if path:
             self.load_pdf(path)
 
-    def load_pdf(self, pdf_path: str) -> None:
-        """Switch to a different PDF: re-render pages and re-run analysis."""
+    def load_pdf(self, pdf_path: str, analyze: bool = True) -> None:
+        """Load a PDF: render its pages and (optionally) run signature analysis."""
         self.pdf_path = pdf_path
         self._renderer.load(pdf_path)
         self.setWindowTitle(f"EU Signature Viewer ({BINDING}) — {Path(pdf_path).name}")
         self.statusBar().showMessage(f"{self._renderer.page_count} page(s) — {BINDING}")
-        self.start_analysis()
+        if analyze:
+            self.start_analysis()
 
     def _show_about(self) -> None:
         QMessageBox.about(self, "About", ABOUT_TEXT)
 
     # ── analysis lifecycle ─────────────────────────────────────────────────
     def _start_worker(self, opts: dict, busy_text: str) -> None:
+        if not self.pdf_path:
+            return  # nothing to analyse yet
         self.infoText.setPlainText(busy_text)
         self._worker = ReportWorker(self.pdf_path, opts)
         self._worker.progress.connect(self.statusBar().showMessage)
@@ -304,6 +371,9 @@ class MainWindow(QMainWindow):
         self._start_worker(self.opts, "Analysing signatures…")
 
     def _refresh_lists(self) -> None:
+        if not self.pdf_path:
+            self.statusBar().showMessage("Open a PDF first", 3000)
+            return
         opts = dict(self.opts, refresh_cache=True)
         self._start_worker(opts, "Refreshing EU Trusted Lists and re-validating…")
 
@@ -318,7 +388,9 @@ class MainWindow(QMainWindow):
 
 def main(argv: "list[str] | None" = None) -> int:
     ap = argparse.ArgumentParser(description="View a PDF and its EU qualified signatures.")
-    ap.add_argument("pdf", help="Path to the PDF file")
+    ap.add_argument("pdf", nargs="?", default=None,
+                    help="Optional path to a PDF. If omitted, the window opens "
+                         "empty — use File ▸ Open or drag a PDF onto it.")
     ap.add_argument("--cache", default="cache", metavar="DIR",
                     help="On-disk LOTL/TL XML cache directory (default: ./cache)")
     ap.add_argument("--refresh-cache", action="store_true",
@@ -331,7 +403,7 @@ def main(argv: "list[str] | None" = None) -> int:
     ap.add_argument("--lotl-url", default=DEFAULT_LOTL_URL, help="Override the LOTL URL")
     args = ap.parse_args(argv)
 
-    if not Path(args.pdf).exists():
+    if args.pdf and not Path(args.pdf).exists():
         print(f"File not found: {args.pdf}")
         return 1
 
@@ -344,7 +416,7 @@ def main(argv: "list[str] | None" = None) -> int:
     )
 
     app = QApplication(sys.argv)
-    win = MainWindow(args.pdf, opts)
+    win = MainWindow(args.pdf, opts)  # args.pdf may be None → empty window
     win.show()
     return app_exec(app)
 
