@@ -4,3 +4,6 @@ endesive
 lxml
 requests
 cryptography
+# Change for PyQt6 depending on runtime
+PyQt5
+pymupdf
