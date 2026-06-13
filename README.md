@@ -77,3 +77,10 @@ Application stores state in XDG cache, usually located in `~/.cache/sigviewer`.
 This is a shortcut so that people can set the layout and have it permanent as
 they like. If you want to reset it for some reason, use `--reset-layout` command
 line paramater.
+
+## Translation
+
+There is one basic translation, for cs_CZ, which can be either triggered by `$LANG` setting
+or manually by `--lang=cs` on the command line. Debug and expert expressions are still in
+English (since they are not translatable), but things like main signature verdict and menus
+are translated.
