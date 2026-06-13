@@ -1,0 +1,83 @@
+# Translations template for SigViewer.
+# Copyright (C) 2026 ORGANIZATION
+# This file is distributed under the same license as the SigViewer project.
+# FIRST AUTHOR <EMAIL@ADDRESS>, 2026.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: SigViewer 1.0\n"
+"Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
+"POT-Creation-Date: 2026-06-13 19:19+0000\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Babel 2.18.0\n"
+
+#: signature_viewer_core.py:83
+msgid "No signatures found in this PDF."
+msgstr ""
+
+#: signature_viewer_core.py:120
+msgid "Could not extract signer certificate"
+msgstr ""
+
+#: signature_viewer_core.py:174
+msgid "QUALIFIED e-signature — natural person (eIDAS Art. 3(12))"
+msgstr ""
+
+#: signature_viewer_core.py:176
+msgid "QUALIFIED e-seal — legal person (eIDAS Art. 3(27))"
+msgstr ""
+
+#: signature_viewer_core.py:178
+msgid "Trusted, but cert lacks a qualified-signature QCStatement"
+msgstr ""
+
+#: signature_viewer_core.py:180
+msgid "Cryptographically valid, but not chaining to an EU TL anchor"
+msgstr ""
+
+#: signature_viewer_core.py:182
+msgid "Failed cryptographic validation (modified/invalid/revoked)"
+msgstr ""
+
+#: signature_viewer_core.py:185
+msgid "Cert carries qualified natural-person QCStatements (validation skipped)"
+msgstr ""
+
+#: signature_viewer_core.py:186
+msgid "Validation skipped"
+msgstr ""
+
+#: signature_viewer_core.py:504
+msgid "File"
+msgstr ""
+
+#: signature_viewer_core.py:505
+msgid "Help"
+msgstr ""
+
+#: signature_viewer_core.py:506
+msgid "Open Recent"
+msgstr ""
+
+#: signature_viewer_core.py:507
+msgid "Open…"
+msgstr ""
+
+#: signature_viewer_core.py:508
+msgid "Quit"
+msgstr ""
+
+#: signature_viewer_core.py:509 signature_viewer_core.py:513
+msgid "About"
+msgstr ""
+
+#: signature_viewer_core.py:514
+msgid "PDF qualified signature validation from EU TL CA roots PyQt utility."
+msgstr ""
+

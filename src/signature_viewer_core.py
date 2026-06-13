@@ -33,6 +33,7 @@ from check_eu_signatures import (
     SignedPdf, EuTrustedListClient, XmlCache, ValidationContextBuilder,
     QcStatementParser, cert_subject_cn, DEFAULT_LOTL_URL, default_cache_dir,
 )
+from i18n import _, install_language
 
 UI_FILE = Path(__file__).with_name("signature_viewer.ui")
 
@@ -79,7 +80,7 @@ def build_signature_data(pdf_path: str, *, cache_dir: str = "cache",
 
     with SignedPdf(pdf_path) as pdf:
         if not pdf.has_signatures:
-            result["message"] = "No signatures found in this PDF."
+            result["message"] = _("No signatures found in this PDF.")
             return result
 
         result["header"] = f"{len(pdf.signatures)} signature(s) found in {Path(pdf_path).name}"
@@ -116,7 +117,7 @@ def build_signature_data(pdf_path: str, *, cache_dir: str = "cache",
                      "verdict": "", "error": None, "groups": []}
 
             if sig.error or sig.signer_cert is None:
-                entry["verdict"] = "Could not extract signer certificate"
+                entry["verdict"] = _("Could not extract signer certificate")
                 entry["error"] = sig.error
                 result["signatures"].append(entry)
                 continue
@@ -170,19 +171,19 @@ def build_signature_data(pdf_path: str, *, cache_dir: str = "cache",
                 sound = v.valid and v.intact
                 fully = sound and v.trusted and not v.revoked
                 if fully and qc.is_qualified_natural_person:
-                    entry["verdict"] = "QUALIFIED e-signature — natural person (eIDAS Art. 3(12))"
+                    entry["verdict"] = _("QUALIFIED e-signature — natural person (eIDAS Art. 3(12))")
                 elif fully and qc.is_qualified_legal_person:
-                    entry["verdict"] = "QUALIFIED e-seal — legal person (eIDAS Art. 3(27))"
+                    entry["verdict"] = _("QUALIFIED e-seal — legal person (eIDAS Art. 3(27))")
                 elif fully:
-                    entry["verdict"] = "Trusted, but cert lacks a qualified-signature QCStatement"
+                    entry["verdict"] = _("Trusted, but cert lacks a qualified-signature QCStatement")
                 elif sound:
-                    entry["verdict"] = "Cryptographically valid, but not chaining to an EU TL anchor"
+                    entry["verdict"] = _("Cryptographically valid, but not chaining to an EU TL anchor")
                 else:
-                    entry["verdict"] = "Failed cryptographic validation (modified/invalid/revoked)"
+                    entry["verdict"] = _("Failed cryptographic validation (modified/invalid/revoked)")
             else:
                 entry["verdict"] = (
-                    "Cert carries qualified natural-person QCStatements (validation skipped)"
-                    if qc.is_qualified_natural_person else "Validation skipped"
+                    _("Cert carries qualified natural-person QCStatements (validation skipped)")
+                    if qc.is_qualified_natural_person else _("Validation skipped")
                 )
 
             result["signatures"].append(entry)
@@ -334,6 +335,10 @@ class MainWindow(QMainWindow):
 
         # Results tree configuration (model is set per-analysis).
         self.infoTree.setHeaderHidden(True)
+
+        # Apply translations to the menu labels (install_language() ran at
+        # startup; the .ui ships English source text).
+        self._retranslate()
 
         # Accept PDFs dropped anywhere on the window. The results tree would
         # otherwise swallow drops, so opt it out.
@@ -494,8 +499,20 @@ class MainWindow(QMainWindow):
         if analyze:
             self.start_analysis()
 
+    def _retranslate(self) -> None:
+        """Apply the active language to menu labels (English source in the .ui)."""
+        self.menuFile.setTitle(_("File"))
+        self.menuHelp.setTitle(_("Help"))
+        self.menuOpenRecent.setTitle(_("Open Recent"))
+        self.actionOpen.setText(_("Open…"))
+        self.actionQuit.setText(_("Quit"))
+        self.actionAbout.setText(_("About"))
+
     def _show_about(self) -> None:
-        QMessageBox.about(self, "About", ABOUT_TEXT)
+        QMessageBox.about(
+            self, _("About"),
+            _("PDF qualified signature validation from EU TL CA roots PyQt utility."),
+        )
 
     # ── analysis lifecycle ─────────────────────────────────────────────────
     def _start_worker(self, opts: dict, busy_text: str) -> None:
@@ -611,7 +628,13 @@ def main(argv: "list[str] | None" = None) -> int:
                     help="Reset the window layout to default, discarding the "
                          "saved dock arrangement and geometry")
     ap.add_argument("--lotl-url", default=DEFAULT_LOTL_URL, help="Override the LOTL URL")
+    ap.add_argument("--lang", default=None, metavar="CODE",
+                    help="UI language code, e.g. 'cs' (default: $LANG, English fallback)")
     args = ap.parse_args(argv)
+
+    # Activate translations BEFORE building the window or running analysis, so
+    # menu labels and verdicts come out in the chosen language.
+    install_language(args.lang)
 
     if args.pdf and not Path(args.pdf).exists():
         print(f"File not found: {args.pdf}")

@@ -16,7 +16,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-SRC="$(cd "$HERE/../src" && pwd)"        # project root: the .py and .ui live here
+SRC="$(cd "$HERE/.." && pwd)"        # project root: the .py and .ui live here
 RECIPE="$HERE/SigViewer"             # recipe folder (desktop/icon/reqs/entrypoint)
 PYVER="${PYVER:-3.10}"
 
@@ -32,6 +32,7 @@ APP_FILES=(
     signature_viewer_core.py
     viewer_pyqt5.py
     signature_viewer.ui
+    i18n.py
 )
 
 STAGE="$HERE/sigviewer_app"
@@ -39,6 +40,13 @@ rm -rf "$STAGE"; mkdir -p "$STAGE"
 for f in "${APP_FILES[@]}"; do
     cp "$SRC/$f" "$STAGE/"
 done
+
+# Bundle the compiled translation catalogs (locale/<lang>/LC_MESSAGES/*.mo).
+# i18n.py looks for locale/ next to itself, i.e. $APPDIR/sigviewer_app/locale/.
+if [ -d "$SRC/locale" ]; then
+    cp -r "$SRC/locale" "$STAGE/locale"
+    find "$STAGE/locale" -name '*.po' -delete   # ship compiled .mo only
+fi
 
 echo "▶ Building SigViewer AppImage (manylinux Python $PYVER)…"
 # Positional RECIPE must come before -x (which is nargs="+" and greedy).
