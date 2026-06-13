@@ -83,7 +83,8 @@ def build_signature_data(pdf_path: str, *, cache_dir: str = "cache",
             result["message"] = _("No signatures found in this PDF.")
             return result
 
-        result["header"] = f"{len(pdf.signatures)} signature(s) found in {Path(pdf_path).name}"
+        result["header"] = _("%(count)d signature(s) found in %(name)s") % {
+            "count": len(pdf.signatures), "name": Path(pdf_path).name}
 
         # Optionally build the trust anchor set from the EU Trusted Lists.
         vc = None
@@ -103,7 +104,8 @@ def build_signature_data(pdf_path: str, *, cache_dir: str = "cache",
                 certs = client.all_qualified_ca_certs(progress=_tl_progress)
                 vc = (ValidationContextBuilder(allow_revocation_fetch=hard_revocation)
                       .add_certs(certs).build())
-                result["trust_note"] = f"Trust anchors: {len(certs)} qualified CA certs from EU TLs"
+                result["trust_note"] = _("Trust anchors: %(count)d qualified CA certs from EU TLs") % {
+                    "count": len(certs)}
                 log(f"Collected {len(certs)} qualified CA certificate(s).")
             except Exception as e:
                 result["trust_note"] = f"EU Trusted Lists unavailable: {e} — trust not checked"
@@ -507,6 +509,12 @@ class MainWindow(QMainWindow):
         self.actionOpen.setText(_("Open…"))
         self.actionQuit.setText(_("Quit"))
         self.actionAbout.setText(_("About"))
+        # Toolbar actions
+        self.actionZoomIn.setText(_("Zoom +"))
+        self.actionZoomOut.setText(_("Zoom −"))
+        self.actionRefresh.setText(_("Refresh trust lists"))
+        # Dock title (also drives its toolbar toggle-button label)
+        self.infoDock.setWindowTitle(_("Signatures & QCStatements"))
 
     def _show_about(self) -> None:
         QMessageBox.about(
