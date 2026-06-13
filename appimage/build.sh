@@ -16,7 +16,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-SRC="$(cd "$HERE/.." && pwd)"        # project root: the .py and .ui live here
+SRC="$(cd "$HERE/../src" && pwd)"        # project root: the .py and .ui live here
 RECIPE="$HERE/SigViewer"             # recipe folder (desktop/icon/reqs/entrypoint)
 PYVER="${PYVER:-3.10}"
 
