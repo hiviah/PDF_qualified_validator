@@ -25,8 +25,8 @@ import fitz  # PyMuPDF
 
 from qt_compat import (
     uic, QThread, pyqtSignal, QByteArray, QImage, QPixmap, QApplication,
-    QMainWindow, QLabel, QFileDialog, QMessageBox, QTextCursor, QTextCharFormat,
-    ALIGN_HCENTER, ORIENT_VERTICAL, FORMAT_RGB888, FONT_BOLD, KEEP_ANCHOR,
+    QMainWindow, QLabel, QFileDialog, QMessageBox, QStandardItemModel,
+    QStandardItem, ALIGN_HCENTER, ORIENT_VERTICAL, FORMAT_RGB888,
     app_exec, BINDING,
 )
 from check_eu_signatures import (
@@ -43,34 +43,46 @@ ABOUT_TEXT = "PDF qualified signature validation from EU TL CA roots PyQt utilit
 # Report generation (pure logic — no Qt — so it can run on a worker thread)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def build_signature_report(pdf_path: str, *, cache_dir: str = "cache",
-                           refresh_cache: bool = False,
-                           hard_revocation: bool = False,
-                           lotl_url: str = DEFAULT_LOTL_URL,
-                           do_validate: bool = True,
-                           log_fetch: bool = False,
-                           log=lambda msg: None,
-                           progress=lambda done, total: None) -> str:
+def build_signature_data(pdf_path: str, *, cache_dir: str = "cache",
+                         refresh_cache: bool = False,
+                         hard_revocation: bool = False,
+                         lotl_url: str = DEFAULT_LOTL_URL,
+                         do_validate: bool = True,
+                         log_fetch: bool = False,
+                         log=lambda msg: None,
+                         progress=lambda done, total: None) -> dict:
     """
-    Produce the plain-text report shown in the lower pane: for each signature,
-    its certificate summary, cryptographic validation result, and parsed
-    QCStatements.
+    Produce structured data for the results tree:
+
+        {
+          "message": str | None,         # set instead of signatures (e.g. "no signatures")
+          "header":  str | None,         # "N signature(s) found in foo.pdf"
+          "trust_note": str | None,      # trust-anchor summary
+          "signatures": [
+            {
+              "title":   "Signature #1",
+              "field":   "Signature1",
+              "verdict": "QUALIFIED e-signature — natural person …",
+              "error":   str | None,
+              "groups":  [ {"name": "Signer certificate",
+                            "rows": [("Common name", "Jan Novak"), …]}, … ],
+            }, …
+          ],
+        }
 
     log:       progress-message callback (str -> None), shown in the status bar.
-    progress:  numeric progress callback (done, total) for a progress bar;
-               total == 0 signals an indeterminate/busy phase (e.g. LOTL fetch).
-    log_fetch: when True, fetch activity is printed to stdout (and fetch errors
-               to stderr) exactly as the command-line tool does.
+    progress:  numeric progress callback (done, total); total == 0 => busy phase.
+    log_fetch: when True, fetch activity prints to stdout (errors to stderr).
     """
     qc_parser = QcStatementParser()
-    out: list[str] = []
+    result = {"message": None, "header": None, "trust_note": None, "signatures": []}
 
     with SignedPdf(pdf_path) as pdf:
         if not pdf.has_signatures:
-            return "No signatures found in this PDF."
+            result["message"] = "No signatures found in this PDF."
+            return result
 
-        out.append(f"{len(pdf.signatures)} signature(s) found in {Path(pdf_path).name}")
-        out.append("")
+        result["header"] = f"{len(pdf.signatures)} signature(s) found in {Path(pdf_path).name}"
 
         # Optionally build the trust anchor set from the EU Trusted Lists.
         vc = None
@@ -90,86 +102,92 @@ def build_signature_report(pdf_path: str, *, cache_dir: str = "cache",
                 certs = client.all_qualified_ca_certs(progress=_tl_progress)
                 vc = (ValidationContextBuilder(allow_revocation_fetch=hard_revocation)
                       .add_certs(certs).build())
-                out.append(f"(trust anchors: {len(certs)} qualified CA certs from EU TLs)")
+                result["trust_note"] = f"Trust anchors: {len(certs)} qualified CA certs from EU TLs"
                 log(f"Collected {len(certs)} qualified CA certificate(s).")
             except Exception as e:
-                out.append(f"(EU Trusted Lists unavailable: {e} — trust not checked)")
+                result["trust_note"] = f"EU Trusted Lists unavailable: {e} — trust not checked"
                 vc = ValidationContextBuilder().build()  # empty trust store
                 log(f"Trusted List download failed: {e}")
         else:
-            out.append("(validation skipped: --no-validate)")
+            result["trust_note"] = "Validation skipped (--no-validate)"
 
         for i, sig in enumerate(pdf.signatures, 1):
-            out.append("")
-            out.append("═" * 66)
-            out.append(f"Signature #{i} — field: {sig.field_name}")
-            out.append("═" * 66)
+            entry = {"title": f"Signature #{i}", "field": sig.field_name,
+                     "verdict": "", "error": None, "groups": []}
 
             if sig.error or sig.signer_cert is None:
-                out.append(f"  ⚠ Could not extract signer certificate: {sig.error}")
+                entry["verdict"] = "Could not extract signer certificate"
+                entry["error"] = sig.error
+                result["signatures"].append(entry)
                 continue
 
             sc = sig.signer_cert
-            out.append("Signer certificate")
-            out.append(f"  Common name : {cert_subject_cn(sc)}")
-            out.append(f"  Subject     : {sc.subject.rfc4514_string()}")
-            out.append(f"  Issuer      : {sc.issuer.rfc4514_string()}")
-            out.append(f"  Serial      : {sc.serial_number:x}")
-            out.append(f"  Valid from  : {sc.not_valid_before_utc}")
-            out.append(f"  Valid until : {sc.not_valid_after_utc}")
-            out.append(f"  Chain certs : {len(sig.chain)}")
+            signer_rows = [
+                ("Common name", cert_subject_cn(sc)),
+                ("Subject", sc.subject.rfc4514_string()),
+                ("Issuer", sc.issuer.rfc4514_string()),
+                ("Serial", f"{sc.serial_number:x}"),
+                ("Valid from", str(sc.not_valid_before_utc)),
+                ("Valid until", str(sc.not_valid_after_utc)),
+                ("Chain certs", str(len(sig.chain))),
+            ]
             if sig.coverage:
-                out.append(f"  Coverage    : {sig.coverage}")
+                signer_rows.append(("Coverage", sig.coverage))
+            entry["groups"].append({"name": "Signer certificate", "rows": signer_rows})
 
-            # Cryptographic validation (run once, reused below)
+            # Cryptographic validation (run once, reused for the verdict)
             v = pdf.validate(sig, vc) if vc is not None else None
             if v is not None:
-                out.append("")
-                out.append("Validation")
+                val_rows = []
                 if v.error:
-                    out.append(f"  ⚠ Validation error: {v.error}")
-                out.append(f"  Intact (unmodified)         : {v.intact}")
-                out.append(f"  CMS signature valid         : {v.valid}")
-                out.append(f"  Chains to EU TL trust anchor : {v.trusted}")
-                out.append(f"  Revoked                     : {v.revoked}")
+                    val_rows.append(("Validation error", v.error))
+                val_rows += [
+                    ("Intact (unmodified)", str(v.intact)),
+                    ("CMS signature valid", str(v.valid)),
+                    ("Chains to EU TL trust anchor", str(v.trusted)),
+                    ("Revoked", str(v.revoked)),
+                ]
+                entry["groups"].append({"name": "Validation", "rows": val_rows})
 
-            # QCStatements
             qc = qc_parser.parse_signature(sig)
-            out.append("")
-            out.append("QCStatements (ETSI EN 319 412-5)")
-            out.append(f"  Present                       : {qc.has_qc_statements}")
+            qc_rows = [("Present", str(qc.has_qc_statements))]
             if qc.has_qc_statements:
-                out.append(f"  QcCompliance (is qualified)   : {qc.qc_compliance}")
-                out.append(f"  QcSSCD (key in secure device) : {qc.qc_sscd}")
-                out.append(f"  QcType esign (natural person) : {qc.qct_esign}")
-                out.append(f"  QcType eseal (legal person)   : {qc.qct_eseal}")
-                out.append(f"  QcType web authentication     : {qc.qct_web}")
+                qc_rows += [
+                    ("QcCompliance (is qualified)", str(qc.qc_compliance)),
+                    ("QcSSCD (key in secure device)", str(qc.qc_sscd)),
+                    ("QcType esign (natural person)", str(qc.qct_esign)),
+                    ("QcType eseal (legal person)", str(qc.qct_eseal)),
+                    ("QcType web authentication", str(qc.qct_web)),
+                ]
                 if qc.statement_ids:
-                    out.append(f"  Statement IDs : {', '.join(qc.statement_ids)}")
+                    qc_rows.append(("Statement IDs", ", ".join(qc.statement_ids)))
                 if qc.qc_type_oids:
-                    out.append(f"  QcType values : {', '.join(qc.qc_type_oids)}")
+                    qc_rows.append(("QcType values", ", ".join(qc.qc_type_oids)))
+            entry["groups"].append({"name": "QCStatements (ETSI EN 319 412-5)", "rows": qc_rows})
 
             # Verdict
-            out.append("")
             if v is not None:
                 sound = v.valid and v.intact
                 fully = sound and v.trusted and not v.revoked
                 if fully and qc.is_qualified_natural_person:
-                    out.append("  VERDICT: QUALIFIED e-signature — natural person (eIDAS Art. 3(12))")
+                    entry["verdict"] = "QUALIFIED e-signature — natural person (eIDAS Art. 3(12))"
                 elif fully and qc.is_qualified_legal_person:
-                    out.append("  VERDICT: QUALIFIED e-seal — legal person (eIDAS Art. 3(27))")
+                    entry["verdict"] = "QUALIFIED e-seal — legal person (eIDAS Art. 3(27))"
                 elif fully:
-                    out.append("  VERDICT: Trusted, but cert lacks a qualified-signature QCStatement")
+                    entry["verdict"] = "Trusted, but cert lacks a qualified-signature QCStatement"
                 elif sound:
-                    out.append("  VERDICT: Cryptographically valid, but not chaining to an EU TL anchor")
+                    entry["verdict"] = "Cryptographically valid, but not chaining to an EU TL anchor"
                 else:
-                    out.append("  VERDICT: Failed cryptographic validation (modified/invalid/revoked)")
+                    entry["verdict"] = "Failed cryptographic validation (modified/invalid/revoked)"
             else:
-                if qc.is_qualified_natural_person:
-                    out.append("  NOTE: cert carries qualified natural-person QCStatements "
-                               "(validation skipped)")
+                entry["verdict"] = (
+                    "Cert carries qualified natural-person QCStatements (validation skipped)"
+                    if qc.is_qualified_natural_person else "Validation skipped"
+                )
 
-    return "\n".join(out)
+            result["signatures"].append(entry)
+
+    return result
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -177,7 +195,7 @@ def build_signature_report(pdf_path: str, *, cache_dir: str = "cache",
 # ══════════════════════════════════════════════════════════════════════════════
 
 class ReportWorker(QThread):
-    finished_text = pyqtSignal(str)
+    finished_data = pyqtSignal(object)     # structured dict for the results tree
     progress = pyqtSignal(str)            # status-bar text
     progress_value = pyqtSignal(int, int)  # (done, total) for the progress bar
 
@@ -188,15 +206,16 @@ class ReportWorker(QThread):
 
     def run(self) -> None:
         try:
-            text = build_signature_report(
+            data = build_signature_data(
                 self.pdf_path,
                 log=self.progress.emit,
                 progress=lambda done, total: self.progress_value.emit(done, total),
                 **self.opts,
             )
         except Exception as e:
-            text = f"Failed to analyse signatures:\n{e}"
-        self.finished_text.emit(text)
+            data = {"message": f"Failed to analyse signatures:\n{e}",
+                    "header": None, "trust_note": None, "signatures": []}
+        self.finished_data.emit(data)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -280,7 +299,7 @@ class MainWindow(QMainWindow):
     def __init__(self, pdf_path: "str | None" = None, opts: "dict | None" = None,
                  autostart: bool = True, reset_layout: bool = False):
         super().__init__()
-        uic.loadUi(str(UI_FILE), self)  # creates self.pdfScroll, self.infoText, actions, …
+        uic.loadUi(str(UI_FILE), self)  # creates self.pdfScroll, self.infoTree, actions, …
 
         self.pdf_path = None  # set by load_pdf()
         self.opts = opts or {}
@@ -313,10 +332,13 @@ class MainWindow(QMainWindow):
         self.mainToolBar.addAction(self.pdfDock.toggleViewAction())
         self.mainToolBar.addAction(self.infoDock.toggleViewAction())
 
-        # Accept PDFs dropped anywhere on the window. The read-only info pane
-        # would otherwise swallow drops, so opt it out.
+        # Results tree configuration (model is set per-analysis).
+        self.infoTree.setHeaderHidden(True)
+
+        # Accept PDFs dropped anywhere on the window. The results tree would
+        # otherwise swallow drops, so opt it out.
         self.setAcceptDrops(True)
-        self.infoText.setAcceptDrops(False)
+        self.infoTree.setAcceptDrops(False)
 
         # Restore (or reset) saved geometry + dock layout. Must come after all
         # docks/toolbars exist so restoreState() can match them by objectName.
@@ -413,9 +435,8 @@ class MainWindow(QMainWindow):
         self.pdf_path = None
         self._renderer.show_placeholder()
         self.setWindowTitle(f"EU Signature Viewer ({BINDING})")
-        self.infoText.setPlainText(
-            "No PDF loaded.\n\n"
-            "Open one with File ▸ Open, or drag a PDF file onto this window."
+        self._show_tree_message(
+            "No PDF loaded — open one with File ▸ Open, or drag a PDF onto this window."
         )
         self.statusBar().showMessage(f"No PDF — {BINDING}")
 
@@ -480,14 +501,14 @@ class MainWindow(QMainWindow):
     def _start_worker(self, opts: dict, busy_text: str) -> None:
         if not self.pdf_path:
             return  # nothing to analyse yet
-        self.infoText.setPlainText(busy_text)
+        self._show_tree_message(busy_text)
         # Show an indeterminate (busy) progress bar until the first update.
         self.progressBar.setRange(0, 0)
         self.progressBar.setVisible(True)
         self._worker = ReportWorker(self.pdf_path, opts)
         self._worker.progress.connect(self.statusBar().showMessage)
         self._worker.progress_value.connect(self._on_progress_value)
-        self._worker.finished_text.connect(self._on_report_ready)
+        self._worker.finished_data.connect(self._on_report_ready)
         self._worker.start()
 
     def _on_progress_value(self, done: int, total: int) -> None:
@@ -509,26 +530,59 @@ class MainWindow(QMainWindow):
         opts = dict(self.opts, refresh_cache=True)
         self._start_worker(opts, "Refreshing EU Trusted Lists and re-validating…")
 
-    def _on_report_ready(self, text: str) -> None:
-        self.infoText.setPlainText(text)
-        self._bold_verdict_lines()
+    def _on_report_ready(self, data: dict) -> None:
+        self._populate_tree(data)
         self.progressBar.setVisible(False)
         self.statusBar().showMessage("Done", 4000)
 
-    def _bold_verdict_lines(self) -> None:
-        """Make any line containing 'VERDICT' bold so it stands out."""
-        doc = self.infoText.document()
-        fmt = QTextCharFormat()
-        fmt.setFontWeight(FONT_BOLD)
-        block = doc.firstBlock()
-        while block.isValid():
-            if "VERDICT" in block.text():
-                cursor = QTextCursor(doc)
-                cursor.setPosition(block.position())
-                cursor.setPosition(block.position() + max(block.length() - 1, 0),
-                                   KEEP_ANCHOR)
-                cursor.mergeCharFormat(fmt)
-            block = block.next()
+    # ── results tree ────────────────────────────────────────────────────────
+    @staticmethod
+    def _leaf(text: str) -> "QStandardItem":
+        item = QStandardItem(text)
+        item.setEditable(False)
+        return item
+
+    def _show_tree_message(self, text: str) -> None:
+        """Show a single informational line in the tree (busy / empty / errors)."""
+        model = QStandardItemModel()
+        model.invisibleRootItem().appendRow(self._leaf(text))
+        self.infoTree.setModel(model)
+
+    def _populate_tree(self, data: dict) -> None:
+        model = QStandardItemModel()
+        root = model.invisibleRootItem()
+
+        if data.get("message"):
+            root.appendRow(self._leaf(data["message"]))
+        if data.get("header"):
+            root.appendRow(self._leaf(data["header"]))
+        if data.get("trust_note"):
+            root.appendRow(self._leaf(data["trust_note"]))
+
+        for sig in data.get("signatures", []):
+            # Top-level node: "Signature #N" + newline + verdict, in bold.
+            top = QStandardItem(f"{sig['title']}\n{sig['verdict']}")
+            top.setEditable(False)
+            font = top.font()
+            font.setBold(True)
+            top.setFont(font)
+
+            if sig.get("field"):
+                top.appendRow(self._leaf(f"Field: {sig['field']}"))
+            if sig.get("error"):
+                top.appendRow(self._leaf(f"Error: {sig['error']}"))
+
+            for group in sig.get("groups", []):
+                gnode = self._leaf(group["name"])
+                for key, value in group["rows"]:
+                    gnode.appendRow(self._leaf(f"{key}: {value}"))
+                top.appendRow(gnode)
+
+            root.appendRow(top)
+
+        self.infoTree.setModel(model)
+        self.infoTree.expandAll()
+        self.infoTree.resizeColumnToContents(0)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

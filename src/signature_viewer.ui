@@ -146,20 +146,18 @@
       </widget>
      </item>
      <item>
-      <widget class="QPlainTextEdit" name="infoText">
-       <property name="font">
-        <font>
-         <family>monospace</family>
-        </font>
+      <widget class="QTreeView" name="infoTree">
+       <property name="editTriggers">
+        <set>QAbstractItemView::NoEditTriggers</set>
        </property>
-       <property name="readOnly">
+       <property name="alternatingRowColors">
         <bool>true</bool>
        </property>
-       <property name="lineWrapMode">
-        <enum>QPlainTextEdit::NoWrap</enum>
+       <property name="uniformRowHeights">
+        <bool>false</bool>
        </property>
-       <property name="plainText">
-        <string>Analysing signatures…</string>
+       <property name="wordWrap">
+        <bool>true</bool>
        </property>
       </widget>
      </item>

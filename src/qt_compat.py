@@ -56,6 +56,7 @@ if BINDING == "PyQt6":
     from PyQt6.QtCore import Qt, QThread, pyqtSignal, QByteArray
     from PyQt6.QtGui import (
         QImage, QPixmap, QFont, QTextCursor, QTextCharFormat,
+        QStandardItemModel, QStandardItem,
     )
     from PyQt6.QtWidgets import (
         QApplication, QMainWindow, QLabel, QFileDialog, QMessageBox,
@@ -75,6 +76,7 @@ else:  # PyQt5
     from PyQt5.QtCore import Qt, QThread, pyqtSignal, QByteArray
     from PyQt5.QtGui import (
         QImage, QPixmap, QFont, QTextCursor, QTextCharFormat,
+        QStandardItemModel, QStandardItem,
     )
     from PyQt5.QtWidgets import (
         QApplication, QMainWindow, QLabel, QFileDialog, QMessageBox,
@@ -93,6 +95,7 @@ else:  # PyQt5
 __all__ = [
     "BINDING", "uic", "Qt", "QThread", "pyqtSignal", "QByteArray",
     "QImage", "QPixmap", "QFont", "QTextCursor", "QTextCharFormat",
+    "QStandardItemModel", "QStandardItem",
     "QApplication", "QMainWindow", "QLabel", "QFileDialog", "QMessageBox",
     "ALIGN_HCENTER", "ORIENT_VERTICAL", "FORMAT_RGB888", "FONT_BOLD",
     "KEEP_ANCHOR", "app_exec",
