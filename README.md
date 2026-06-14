@@ -16,6 +16,7 @@ Outputs signatures - CN of signer - and result for each signature:
   * such CA root belongs among the EU qualified signature roots (person, seal, web is recognized now)
   * shows other OIDs found under the QcStatements extension
 
+![Qualified seal (signature)](Qualified_Signature.png)
 ## Disclaimer:
 
 I've read the specs, but this is still experimental. Partly done with LLM even though I
