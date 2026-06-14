@@ -16,6 +16,10 @@ Outputs signatures - CN of signer - and result for each signature:
   * such CA root belongs among the EU qualified signature roots (person, seal, web is recognized now)
   * shows other OIDs found under the QcStatements extension
 
+## Authors
+
+Authors: Ondrej Mikle, via CZ.NIC z.s.p.o.
+
 ![Qualified seal (signature)](Qualified_Signature.png)
 ## Disclaimer:
 
