@@ -22,12 +22,14 @@ import os
 import gettext as _gettext
 from pathlib import Path
 
+#: gettext domain name; matches the .mo filename (sigviewer.mo).
 DOMAIN = "sigviewer"
 # locale/ sits next to this file, so it works from a checkout and inside the
 # AppImage (where these modules live under $APPDIR/sigviewer_app/).
+#: directory containing <lang>/LC_MESSAGES/sigviewer.mo catalogs.
 LOCALE_DIR = str(Path(__file__).with_name("locale"))
 
-# Holds the active translation; starts as a null translation (English source).
+#: the active translation catalog; starts as English-source NullTranslations.
 _translation = _gettext.NullTranslations()
 
 

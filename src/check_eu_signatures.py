@@ -87,10 +87,25 @@ GRANTED_STATUSES = {
 
 
 def _cert_fingerprint(cert: x509.Certificate) -> str:
+    """Return the lowercase hex SHA-256 fingerprint of a certificate.
+
+    Args:
+        cert: a cryptography ``x509.Certificate``.
+    Returns:
+        The SHA-256 digest of the certificate's DER encoding, as hex.
+    """
     return cert.fingerprint(hashes.SHA256()).hex()
 
 
 def cert_subject_cn(cert: x509.Certificate) -> str:
+    """Return the Common Name (CN) from a certificate's subject.
+
+    Args:
+        cert: a cryptography ``x509.Certificate``.
+    Returns:
+        The first CN attribute value, or the full RFC4514 subject string
+        when the subject has no CN.
+    """
     try:
         return cert.subject.get_attributes_for_oid(
             x509.oid.NameOID.COMMON_NAME
@@ -105,7 +120,17 @@ def cert_subject_cn(cert: x509.Certificate) -> str:
 
 @dataclass
 class SignatureInfo:
-    """One embedded PDF signature plus its extracted certificate material."""
+    """One embedded PDF signature plus its extracted certificate material.
+
+    Attributes:
+        field_name: name of the signature form field.
+        signer_cert: the signer's certificate (None if it couldn't be read).
+        chain: the certificates supplied with the signature, signer-first.
+        coverage: how much of the document the signature covers, if known.
+        error: a message set when extraction failed for this signature.
+        _embedded: the underlying pyHanko object, kept so ``validate()`` can
+            re-run validation on this signature.
+    """
     field_name: str
     signer_cert: Optional[x509.Certificate] = None
     chain: list[x509.Certificate] = field(default_factory=list)
@@ -117,7 +142,18 @@ class SignatureInfo:
 
 @dataclass
 class ValidationResult:
-    """Outcome of cryptographically validating one signature."""
+    """Outcome of cryptographically validating one signature.
+
+    Attributes:
+        valid: the CMS signature verifies over the signed bytes.
+        intact: the document is unmodified within the signature's coverage.
+        trusted: a path builds and verifies to a configured trust anchor.
+        revoked: True/False if revocation was checked, else None.
+        coverage: textual description of the signature's byte coverage.
+        bottom_line: pyHanko's overall pass/fail verdict.
+        summary: a short human-readable status string.
+        error: a message set when validation raised, else None.
+    """
     valid: bool = False        # CMS signature verifies over the signed bytes
     intact: bool = False       # document unmodified within signature coverage
     trusted: bool = False      # a path builds+verifies to a trust anchor
@@ -135,7 +171,18 @@ class ValidationResult:
 
 @dataclass
 class QcInfo:
-    """Parsed id-etsi-ext-qcStatements content for a certificate."""
+    """Parsed id-etsi-ext-qcStatements content for a certificate.
+
+    Attributes:
+        has_qc_statements: the QCStatements extension is present.
+        qc_compliance: the QcCompliance statement (EU-qualified certificate).
+        qc_sscd: the private key resides in a secure signature-creation device.
+        qct_esign: QcType esign — natural-person electronic signature.
+        qct_eseal: QcType eseal — legal-person electronic seal.
+        qct_web: QcType web — website authentication.
+        statement_ids: the top-level QCStatement OIDs found.
+        qc_type_oids: the OIDs found inside the QcType sequence.
+    """
     has_qc_statements: bool = False
     qc_compliance: bool = False
     qc_sscd: bool = False
@@ -147,10 +194,16 @@ class QcInfo:
 
     @property
     def is_qualified_natural_person(self) -> bool:
+        """Whether the certificate denotes a qualified electronic signature for a
+        natural person (QcCompliance present together with the esign QcType).
+        """
         return self.qc_compliance and self.qct_esign
 
     @property
     def is_qualified_legal_person(self) -> bool:
+        """Whether the certificate denotes a qualified electronic seal for a legal
+        person (QcCompliance present together with the eseal QcType).
+        """
         return self.qc_compliance and self.qct_eseal
 
 
@@ -169,9 +222,19 @@ class SignedPdf:
         with SignedPdf("doc.pdf") as pdf:
             for sig in pdf.signatures:
                 result = pdf.validate(sig, validation_context)
+
+    Attributes:
+        path: filesystem path to the PDF being inspected.
+        _fh: the open binary file handle (None until ``open()``).
+        _reader: the pyHanko ``PdfFileReader`` (None until ``open()``).
+        _signatures: cached list of extracted ``SignatureInfo`` (None until
+            the ``signatures`` property is first accessed).
     """
 
     def __init__(self, path: str):
+        """Args:
+            path: filesystem path to the PDF to inspect.
+        """
         self.path = path
         self._fh = None
         self._reader = None
@@ -179,6 +242,13 @@ class SignedPdf:
 
     # ── lifecycle ────────────────────────────────────────────────────────────
     def open(self) -> "SignedPdf":
+        """Open the underlying pyHanko PDF reader.
+
+        Called automatically by the context manager.
+
+        Returns:
+            self, for convenience.
+        """
         from pyhanko.pdf_utils.reader import PdfFileReader
         if self._fh is None:
             self._fh = open(self.path, "rb")
@@ -186,15 +256,22 @@ class SignedPdf:
         return self
 
     def close(self) -> None:
+        """Release the underlying file handle, if open."""
         if self._fh is not None:
             self._fh.close()
             self._fh = None
             self._reader = None
 
     def __enter__(self) -> "SignedPdf":
+        """Enter the context manager, opening the PDF. Returns self."""
         return self.open()
 
     def __exit__(self, *exc) -> None:
+        """Exit the context manager, closing the PDF.
+
+        Args:
+            *exc: the (type, value, traceback) triple (ignored).
+        """
         self.close()
 
     # ── extraction ───────────────────────────────────────────────────────────
@@ -204,6 +281,10 @@ class SignedPdf:
         return x509.load_der_x509_certificate(asn1_cert.dump(), default_backend())
 
     def _extract(self) -> list[SignatureInfo]:
+        """Parse the embedded signatures into ``SignatureInfo`` records.
+
+        The result is cached on first access.
+        """
         if self._reader is None:
             raise RuntimeError("SignedPdf is not open; call open() or use a 'with' block.")
 
@@ -245,6 +326,7 @@ class SignedPdf:
 
     @property
     def has_signatures(self) -> bool:
+        """True if the PDF contains at least one embedded signature."""
         return len(self.signatures) > 0
 
     # ── validation ───────────────────────────────────────────────────────────
@@ -319,12 +401,29 @@ class XmlCache:
     single run fetches each URL at most once. If a re-download fails but a stale
     copy exists on disk, the stale copy is used (with a warning) rather than
     failing outright.
+
+    Attributes:
+        cache_dir: root directory of the on-disk cache (``Path``).
+        max_age_seconds: freshness window in seconds (``max_age_hours`` × 3600).
+        force_refresh: when True, every fetch ignores the cached copy.
+        session: the ``requests.Session`` used for downloads.
+        timeout: per-request timeout in seconds.
+        verbose: when True, fetch/cache activity is printed.
+        _mem: in-run memo mapping cache path → parsed lxml root.
     """
 
     def __init__(self, cache_dir: str = "cache", max_age_hours: float = 24.0,
                  force_refresh: bool = False,
                  session: Optional[requests.Session] = None,
                  timeout: int = 30, verbose: bool = True):
+        """Args:
+            cache_dir: directory holding the cached LOTL/TL XML files.
+            max_age_hours: age after which a cached file is considered stale.
+            force_refresh: when True, always re-download and ignore cached copies.
+            session: optional ``requests.Session`` (one is created if omitted).
+            timeout: per-request timeout in seconds.
+            verbose: when True, print fetch/cache activity (errors to stderr).
+        """
         self.cache_dir = Path(cache_dir)
         self.max_age_seconds = max_age_hours * 3600.0
         self.force_refresh = force_refresh
@@ -334,20 +433,41 @@ class XmlCache:
         self._mem: dict[str, etree._Element] = {}
 
     def _log(self, msg: str, is_error: bool = False) -> None:
+        """Print a log line when ``verbose`` is set.
+
+        Args:
+            msg: the text to print.
+            is_error: route to stderr instead of stdout.
+        """
         if self.verbose:
             print(msg, file=sys.stderr if is_error else sys.stdout)
 
     # ── path layout ──────────────────────────────────────────────────────────
     def lotl_path(self) -> Path:
+        """Filesystem path of the cached LOTL file."""
         return self.cache_dir / "LOTL.xml"
 
     def national_path(self, country: str) -> Path:
         # Country code sanitised to avoid path traversal from unexpected input.
+        """Filesystem path of the cached national TL.
+
+        Args:
+            country: ISO territory code, e.g. ``"CZ"``.
+        """
         cc = "".join(ch for ch in (country or "XX") if ch.isalnum()) or "XX"
         return self.cache_dir / cc.upper() / "TL.xml"
 
     # ── staleness ────────────────────────────────────────────────────────────
     def _is_stale(self, path: Path, check_next_update: bool) -> bool:
+        """Whether a cached file needs to be (re-)downloaded.
+
+        Args:
+            path: the cached file to test.
+            check_next_update: also honour the TSL's ``NextUpdate`` field.
+        Returns:
+            True if the file is missing, force-refresh is set, it is older than
+            ``max_age_hours``, or its NextUpdate has passed.
+        """
         if self.force_refresh:
             return True
         if not path.exists():
@@ -363,6 +483,7 @@ class XmlCache:
 
     @staticmethod
     def _read_next_update(path: Path) -> Optional[datetime]:
+        """Return the ``NextUpdate`` datetime from a cached TSL file, or None."""
         try:
             root = etree.parse(str(path)).getroot()
         except Exception:
@@ -373,12 +494,21 @@ class XmlCache:
     # ── disk + network I/O ───────────────────────────────────────────────────
     @staticmethod
     def _load(path: Path) -> Optional[etree._Element]:
+        """Parse a cached XML file and return its lxml root element."""
         try:
             return etree.fromstring(path.read_bytes())
         except Exception:
             return None
 
     def _download(self, url: str, label: str) -> Optional[bytes]:
+        """Fetch a URL's bytes.
+
+        Args:
+            url: the URL to GET.
+            label: a human-readable label used in log output.
+        Returns:
+            The response body, or None if the request failed.
+        """
         try:
             self._log(f"  [fetch] {label or url}")
             resp = self.session.get(url, timeout=self.timeout)
@@ -390,6 +520,7 @@ class XmlCache:
 
     @staticmethod
     def _write(path: Path, content: bytes) -> None:
+        """Atomically write bytes to a cache path (temp file then rename)."""
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_bytes(content)
@@ -397,6 +528,16 @@ class XmlCache:
 
     # ── core get ─────────────────────────────────────────────────────────────
     def _get(self, url: str, path: Path, check_next_update: bool, label: str) -> Optional[etree._Element]:
+        """Return a parsed XML root for ``url``, using or refreshing the cache.
+
+        Args:
+            url: source URL.
+            path: cache location for the downloaded file.
+            check_next_update: honour the TSL NextUpdate when judging staleness.
+            label: log label for the download.
+        Returns:
+            The parsed lxml root, or None on failure.
+        """
         if url in self._mem:
             return self._mem[url]
 
@@ -424,9 +565,20 @@ class XmlCache:
 
     # ── public API ───────────────────────────────────────────────────────────
     def get_lotl(self, url: str) -> Optional[etree._Element]:
+        """Return the parsed LOTL root, downloading and caching as needed.
+
+        Args:
+            url: the List-of-Trusted-Lists URL.
+        """
         return self._get(url, self.lotl_path(), check_next_update=True, label="EU LOTL")
 
     def get_national(self, country: str, url: str) -> Optional[etree._Element]:
+        """Return a parsed national TL root, downloading and caching as needed.
+
+        Args:
+            country: ISO territory code.
+            url: the national trusted-list URL.
+        """
         return self._get(url, self.national_path(country),
                          check_next_update=False, label=f"TL [{country}]")
 
@@ -436,10 +588,24 @@ class EuTrustedListClient:
     Resolves the EU LOTL into national Trusted List URLs and the qualified-CA
     certificates those lists contain. All XML fetching/caching is delegated to
     an XmlCache (persistent on disk); this class only handles parsing.
+
+    Attributes:
+        lotl_url: URL of the EU List-of-Trusted-Lists.
+        cache: the ``XmlCache`` used for all downloads.
+        verbose: when True, fetch activity is printed.
+        _national_urls: cached list of {country, url} dicts (None until
+            ``national_tl_urls()`` is first called).
+        _all_certs: cached union of qualified-CA DER certs (None until
+            ``all_qualified_ca_certs()`` runs unfiltered).
     """
 
     def __init__(self, lotl_url: str = DEFAULT_LOTL_URL,
                  cache: Optional[XmlCache] = None, verbose: bool = True):
+        """Args:
+            lotl_url: URL of the EU List-of-Trusted-Lists.
+            cache: an ``XmlCache`` used for all downloads.
+            verbose: when True, print fetch activity (errors to stderr).
+        """
         self.lotl_url = lotl_url
         self.cache = cache or XmlCache(verbose=verbose)
         self.verbose = verbose
@@ -447,6 +613,12 @@ class EuTrustedListClient:
         self._all_certs: Optional[list[bytes]] = None
 
     def _log(self, msg: str, is_error: bool = False) -> None:
+        """Print a log line when ``verbose`` is set.
+
+        Args:
+            msg: the text to print.
+            is_error: route to stderr instead of stdout.
+        """
         if self.verbose:
             print(msg, file=sys.stderr if is_error else sys.stdout)
 
@@ -552,28 +724,53 @@ class ValidationContextBuilder:
     """
     Accumulates trusted DER certificates and builds a pyhanko ValidationContext
     that uses them as trust anchors.
+
+    Attributes:
+        allow_revocation_fetch: when True, validation requires revocation info
+            and fetches OCSP/CRL online (hard-fail); when False it soft-fails.
+        _der_certs: accumulated DER-encoded trust-anchor certificates.
     """
 
     def __init__(self, allow_revocation_fetch: bool = False):
         # When True: require revocation info and fetch OCSP/CRL online
         # (hard-fail). When False: soft-fail (don't reject if revocation info
         # is simply unavailable / offline).
+        """Args:
+            allow_revocation_fetch: when True, permit OCSP/CRL network fetches
+                during validation; when False, validation is offline.
+        """
         self.allow_revocation_fetch = allow_revocation_fetch
         self._der_certs: list[bytes] = []
 
     def add_certs(self, der_certs: Iterable[bytes]) -> "ValidationContextBuilder":
+        """Add several trust-anchor certificates.
+
+        Args:
+            der_certs: an iterable of DER-encoded certificates.
+        Returns:
+            self, to allow chaining.
+        """
         self._der_certs.extend(der_certs)
         return self
 
     def add_cert(self, der_cert: bytes) -> "ValidationContextBuilder":
+        """Add a single DER-encoded trust anchor.
+
+        Args:
+            der_cert: the DER-encoded certificate bytes.
+        Returns:
+            self, to allow chaining.
+        """
         self._der_certs.append(der_cert)
         return self
 
     @property
     def trust_root_count(self) -> int:
+        """Number of trust anchors accumulated so far."""
         return len(self._der_certs)
 
     def build(self):
+        """Build a pyHanko ``ValidationContext`` from the accumulated anchors."""
         from pyhanko_certvalidator import ValidationContext
         from asn1crypto import x509 as asn1x509
 
@@ -615,9 +812,19 @@ class QcStatementParser:
     The esign/eseal/web OIDs (…1.6.1 / .2 / .3) are *values inside* that nested
     sequence, NOT statement IDs — so detecting "natural person" requires opening
     the QcType statement's statementInfo and walking its OID list.
+
+    This parser is stateless (it holds no instance attributes); each call is
+    independent.
     """
 
     def parse_certificate(self, cert: x509.Certificate) -> QcInfo:
+        """Parse a certificate's QCStatements extension into a ``QcInfo``.
+
+        Args:
+            cert: a cryptography ``x509.Certificate``.
+        Returns:
+            A populated ``QcInfo`` (empty/false fields when no QCStatements).
+        """
         info = QcInfo()
         try:
             ext = cert.extensions.get_extension_for_oid(
@@ -690,6 +897,16 @@ def check_pdf(pdf_path: str, hard_revocation: bool = False,
               cache_dir: str = "cache", refresh_cache: bool = False,
               max_age_hours: float = 24.0) -> None:
     # Silence pyhanko's expected path-building ERROR logs for untrusted sigs.
+    """Validate a PDF's signatures and print a human-readable report.
+
+    Args:
+        pdf_path: path to the PDF to check.
+        hard_revocation: require and fetch OCSP/CRL revocation information.
+        lotl_url: the List-of-Trusted-Lists URL.
+        cache_dir: on-disk XML cache directory.
+        refresh_cache: force a re-download of the trusted lists.
+        max_age_hours: cache freshness window in hours.
+    """
     logging.getLogger("pyhanko").setLevel(logging.CRITICAL)
     logging.getLogger("pyhanko_certvalidator").setLevel(logging.CRITICAL)
 
@@ -777,6 +994,11 @@ def check_pdf(pdf_path: str, hard_revocation: bool = False,
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+    """Command-line entry point.
+
+    Args:
+        argv: optional argument vector (defaults to ``sys.argv[1:]``).
+    """
     ap = argparse.ArgumentParser(description="Check EU qualified signatures in a PDF.")
     ap.add_argument("pdf", help="Path to the PDF file")
     ap.add_argument("--hard-revocation", action="store_true",

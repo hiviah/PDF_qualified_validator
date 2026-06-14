@@ -35,9 +35,8 @@ from check_eu_signatures import (
 )
 from i18n import _, install_language
 
+#: Path to the shared Qt Designer UI loaded at runtime (sits beside this file).
 UI_FILE = Path(__file__).with_name("signature_viewer.ui")
-
-ABOUT_TEXT = "PDF qualified signature validation from EU TL CA roots PyQt utility."
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -98,6 +97,13 @@ def build_signature_data(pdf_path: str, *, cache_dir: str = "cache",
                                              verbose=log_fetch)
 
                 def _tl_progress(done, total, country):
+                    """Per-TL progress callback: update the bar and status text.
+
+                    Args:
+                        done: national lists processed so far.
+                        total: total number of national lists.
+                        country: ISO code of the list just processed.
+                    """
                     progress(done, total)
                     log(f"Trusted Lists: {done}/{total} ({country})")
 
@@ -198,16 +204,34 @@ def build_signature_data(pdf_path: str, *, cache_dir: str = "cache",
 # ══════════════════════════════════════════════════════════════════════════════
 
 class ReportWorker(QThread):
+    """Background thread that runs signature analysis off the UI thread.
+
+    Signals:
+        finished_data(object): emitted with the structured result dict.
+        progress(str): status-bar text updates.
+        progress_value(int, int): (done, total) for the progress bar.
+
+    Attributes:
+        pdf_path: the PDF being analysed.
+        opts: keyword options forwarded to ``build_signature_data``.
+    """
     finished_data = pyqtSignal(object)     # structured dict for the results tree
     progress = pyqtSignal(str)            # status-bar text
     progress_value = pyqtSignal(int, int)  # (done, total) for the progress bar
 
     def __init__(self, pdf_path: str, opts: dict):
+        """Args:
+            pdf_path: the PDF to analyse.
+            opts: keyword options forwarded to ``build_signature_data``.
+        """
         super().__init__()
         self.pdf_path = pdf_path
         self.opts = opts
 
     def run(self) -> None:
+        """Thread body: run the analysis and emit ``finished_data`` (a result
+        dict even on failure, carrying a ``message``).
+        """
         try:
             data = build_signature_data(
                 self.pdf_path,
@@ -226,9 +250,19 @@ class ReportWorker(QThread):
 # ══════════════════════════════════════════════════════════════════════════════
 
 class PdfPageRenderer:
-    """Renders PDF pages (via PyMuPDF) as QLabels into a target QVBoxLayout."""
+    """Renders PDF pages (via PyMuPDF) as QLabels into a target QVBoxLayout.
+
+    Attributes:
+        _doc: the open PyMuPDF document, or None when showing the placeholder.
+        _layout: the ``QVBoxLayout`` page labels are rendered into.
+        _zoom: current zoom factor applied when rasterising pages.
+    """
 
     def __init__(self, layout, zoom: float = 1.5):
+        """Args:
+            layout: the ``QVBoxLayout`` page labels are rendered into.
+            zoom: initial zoom factor.
+        """
         self._doc = None
         self._layout = layout
         self._zoom = zoom
@@ -254,6 +288,7 @@ class PdfPageRenderer:
         self.render()
 
     def _clear(self) -> None:
+        """Remove and delete every widget currently in the layout."""
         while self._layout.count():
             item = self._layout.takeAt(0)
             w = item.widget()
@@ -261,6 +296,7 @@ class PdfPageRenderer:
                 w.deleteLater()
 
     def render(self) -> None:
+        """Render every page of the current document into the layout."""
         self._clear()
         mat = fitz.Matrix(self._zoom, self._zoom)
         for page in self._doc:
@@ -275,19 +311,23 @@ class PdfPageRenderer:
 
     @property
     def has_doc(self) -> bool:
+        """True when a document is currently loaded."""
         return self._doc is not None
 
     @property
     def page_count(self) -> int:
+        """Number of pages in the current document (0 if none is loaded)."""
         return self._doc.page_count if self._doc is not None else 0
 
     def zoom_in(self) -> None:
+        """Increase the zoom and re-render (no-op when no document is loaded)."""
         if self._doc is None:
             return
         self._zoom = min(self._zoom * 1.25, 6.0)
         self.render()
 
     def zoom_out(self) -> None:
+        """Decrease the zoom and re-render (no-op when no document is loaded)."""
         if self._doc is None:
             return
         self._zoom = max(self._zoom / 1.25, 0.25)
@@ -299,8 +339,29 @@ class PdfPageRenderer:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class MainWindow(QMainWindow):
+    """Main application window: PDF view, results tree, menu and persistence.
+
+    Loads its layout from ``signature_viewer.ui`` and wires the declared
+    actions to logic. Holds the PDF renderer, the analysis worker, and the
+    persisted UI state (geometry, dock layout, last-open dir, recent files).
+
+    Attributes:
+        pdf_path: path of the currently loaded PDF, or None.
+        opts: analysis options forwarded to the worker / ``build_signature_data``.
+        _worker: the running ``ReportWorker``, or None.
+        _renderer: the ``PdfPageRenderer`` driving the PDF pane.
+        _ui_state_path: location of the persisted ``ui_state.json``.
+        _last_open_dir: directory last used in File ▸ Open.
+        _recent_files: recent file paths, most-recent first, capped at five.
+    """
     def __init__(self, pdf_path: "str | None" = None, opts: "dict | None" = None,
                  autostart: bool = True, reset_layout: bool = False):
+        """Args:
+            pdf_path: optional PDF to open at startup (None → empty window).
+            opts: analysis options (cache_dir, do_validate, log_fetch, …).
+            autostart: analyse immediately when a startup PDF is supplied.
+            reset_layout: ignore the saved geometry/dock layout and use defaults.
+        """
         super().__init__()
         uic.loadUi(str(UI_FILE), self)  # creates self.pdfScroll, self.infoTree, actions, …
 
@@ -362,12 +423,20 @@ class MainWindow(QMainWindow):
 
     # ── persisted UI state ──────────────────────────────────────────────────
     def _load_ui_state_dict(self) -> dict:
+        """Read the persisted UI-state JSON from the cache dir.
+
+        Returns:
+            The parsed dict, or an empty dict if absent/unreadable.
+        """
         try:
             return json.loads(self._ui_state_path.read_text())
         except Exception:
             return {}
 
     def _save_ui_state(self) -> None:
+        """Persist geometry, dock layout, last-open dir and recent files to the
+        cache directory. Never raises on write failure.
+        """
         data = {
             "geometry": base64.b64encode(bytes(self.saveGeometry())).decode(),
             "state": base64.b64encode(bytes(self.saveState())).decode(),
@@ -381,6 +450,7 @@ class MainWindow(QMainWindow):
             pass  # never let a cache-write failure break the app
 
     def _restore_ui_state(self) -> None:
+        """Restore geometry, dock layout, last-open dir and recent files from disk."""
         d = self._load_ui_state_dict()
         self._last_open_dir = d.get("last_open_dir", "") or ""
         self._recent_files = [p for p in (d.get("recent_files") or []) if isinstance(p, str)][:5]
@@ -395,6 +465,9 @@ class MainWindow(QMainWindow):
     def _reset_ui_state(self) -> None:
         # Keep the remembered open-dir and recent files (they aren't layout),
         # but drop the saved geometry/layout so the window uses .ui defaults.
+        """Discard the saved geometry/layout (keeping last-open dir and recent
+        files) so the window opens with the .ui defaults.
+        """
         d = self._load_ui_state_dict()
         self._last_open_dir = d.get("last_open_dir", "") or ""
         self._recent_files = [p for p in (d.get("recent_files") or []) if isinstance(p, str)][:5]
@@ -405,6 +478,13 @@ class MainWindow(QMainWindow):
 
     # ── recent files ────────────────────────────────────────────────────────
     def _add_recent(self, path: str) -> None:
+        """Add a freshly opened file to the top of the recent list.
+
+        The list is de-duplicated and capped at five entries.
+
+        Args:
+            path: the file that was opened.
+        """
         ap = str(Path(path).expanduser().resolve())
         self._recent_files = [p for p in self._recent_files if p != ap]
         self._recent_files.insert(0, ap)
@@ -412,6 +492,9 @@ class MainWindow(QMainWindow):
         self._rebuild_recent_menu()
 
     def _rebuild_recent_menu(self) -> None:
+        """Repopulate the Open Recent submenu from the recent-files list,
+        disabling it when there is no history.
+        """
         menu = self.menuOpenRecent
         menu.clear()
         if not self._recent_files:
@@ -425,6 +508,13 @@ class MainWindow(QMainWindow):
             act.triggered.connect(lambda checked=False, p=path: self._open_recent(p))
 
     def _open_recent(self, path: str) -> None:
+        """Open a file chosen from Open Recent.
+
+        If the file no longer exists it is pruned from the list instead.
+
+        Args:
+            path: the recent file to open.
+        """
         if not Path(path).exists():
             self.statusBar().showMessage(f"File no longer exists: {path}", 5000)
             self._recent_files = [p for p in self._recent_files if p != path]
@@ -434,11 +524,17 @@ class MainWindow(QMainWindow):
         self.load_pdf(path)
 
     def closeEvent(self, event) -> None:
+        """Persist the UI state as the window closes.
+
+        Args:
+            event: the Qt close event.
+        """
         self._save_ui_state()
         super().closeEvent(event)
 
     # ── empty state ─────────────────────────────────────────────────────────
     def _set_no_pdf_state(self) -> None:
+        """Show the empty placeholder state when no PDF is loaded."""
         self.pdf_path = None
         self._renderer.show_placeholder()
         self.setWindowTitle(f"EU Signature Viewer ({BINDING})")
@@ -450,6 +546,11 @@ class MainWindow(QMainWindow):
     # ── drag & drop ─────────────────────────────────────────────────────────
     @staticmethod
     def _first_pdf_path(mime) -> "str | None":
+        """Return the first local ``.pdf`` path in a drag payload, or None.
+
+        Args:
+            mime: the drag's ``QMimeData``.
+        """
         if mime is None or not mime.hasUrls():
             return None
         for url in mime.urls():
@@ -459,18 +560,33 @@ class MainWindow(QMainWindow):
         return None
 
     def dragEnterEvent(self, event) -> None:
+        """Accept the drag when it carries a PDF file.
+
+        Args:
+            event: the drag-enter event.
+        """
         if self._first_pdf_path(event.mimeData()):
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dragMoveEvent(self, event) -> None:
+        """Accept the drag-move when it carries a PDF file.
+
+        Args:
+            event: the drag-move event.
+        """
         if self._first_pdf_path(event.mimeData()):
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dropEvent(self, event) -> None:
+        """Load a PDF dropped onto the window.
+
+        Args:
+            event: the drop event.
+        """
         path = self._first_pdf_path(event.mimeData())
         if path:
             event.acceptProposedAction()
@@ -480,6 +596,7 @@ class MainWindow(QMainWindow):
 
     # ── menu handlers ───────────────────────────────────────────────────────
     def _open_pdf(self) -> None:
+        """File ▸ Open handler: pick a PDF, remember its directory, and load it."""
         start_dir = self._last_open_dir or (
             str(Path(self.pdf_path).parent) if self.pdf_path else "")
         path, _ = QFileDialog.getOpenFileName(
@@ -517,6 +634,7 @@ class MainWindow(QMainWindow):
         self.infoDock.setWindowTitle(_("Signatures & QCStatements"))
 
     def _show_about(self) -> None:
+        """Show the translated About dialog."""
         QMessageBox.about(
             self, _("About"),
             _("PDF qualified signature validation from EU TL CA roots PyQt utility."),
@@ -524,6 +642,12 @@ class MainWindow(QMainWindow):
 
     # ── analysis lifecycle ─────────────────────────────────────────────────
     def _start_worker(self, opts: dict, busy_text: str) -> None:
+        """Start a background analysis run.
+
+        Args:
+            opts: options forwarded to ``build_signature_data``.
+            busy_text: message shown in the tree while the run is in progress.
+        """
         if not self.pdf_path:
             return  # nothing to analyse yet
         self._show_tree_message(busy_text)
@@ -537,6 +661,12 @@ class MainWindow(QMainWindow):
         self._worker.start()
 
     def _on_progress_value(self, done: int, total: int) -> None:
+        """Update the progress bar.
+
+        Args:
+            done: items completed.
+            total: total items; ``<= 0`` shows an indeterminate/busy bar.
+        """
         if total <= 0:
             # Indeterminate phase (e.g. fetching the LOTL) → busy animation.
             self.progressBar.setRange(0, 0)
@@ -546,9 +676,11 @@ class MainWindow(QMainWindow):
         self.progressBar.setVisible(True)
 
     def start_analysis(self) -> None:
+        """Analyse the current PDF using the window's default options."""
         self._start_worker(self.opts, "Analysing signatures…")
 
     def _refresh_lists(self) -> None:
+        """Re-download the trusted lists and re-validate (Refresh action)."""
         if not self.pdf_path:
             self.statusBar().showMessage("Open a PDF first", 3000)
             return
@@ -556,6 +688,11 @@ class MainWindow(QMainWindow):
         self._start_worker(opts, "Refreshing EU Trusted Lists and re-validating…")
 
     def _on_report_ready(self, data: dict) -> None:
+        """Populate the results tree when analysis finishes.
+
+        Args:
+            data: the structured result dict from ``build_signature_data``.
+        """
         self._populate_tree(data)
         self.progressBar.setVisible(False)
         self.statusBar().showMessage("Done", 4000)
@@ -563,6 +700,11 @@ class MainWindow(QMainWindow):
     # ── results tree ────────────────────────────────────────────────────────
     @staticmethod
     def _leaf(text: str) -> "QStandardItem":
+        """Create a non-editable leaf ``QStandardItem``.
+
+        Args:
+            text: the item's display text.
+        """
         item = QStandardItem(text)
         item.setEditable(False)
         return item
@@ -574,6 +716,11 @@ class MainWindow(QMainWindow):
         self.infoTree.setModel(model)
 
     def _populate_tree(self, data: dict) -> None:
+        """Build and install the results-tree model from structured data.
+
+        Args:
+            data: the dict produced by ``build_signature_data``.
+        """
         model = QStandardItemModel()
         root = model.invisibleRootItem()
 
@@ -615,6 +762,11 @@ class MainWindow(QMainWindow):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main(argv: "list[str] | None" = None) -> int:
+    """GUI entry point: parse arguments, activate the language, show the window.
+
+    Args:
+        argv: optional argument vector (defaults to ``sys.argv[1:]``).
+    """
     ap = argparse.ArgumentParser(description="View a PDF and its EU qualified signatures.")
     ap.add_argument("pdf", nargs="?", default=None,
                     help="Optional path to a PDF. If omitted, the window opens "
