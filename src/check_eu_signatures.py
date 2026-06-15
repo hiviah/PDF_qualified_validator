@@ -25,6 +25,8 @@ import sys
 import os
 import tempfile
 import base64
+import json
+import html
 import logging
 import argparse
 import time
@@ -38,6 +40,15 @@ from lxml import etree
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.backends import default_backend
+
+# Translation hook. i18n.py is Qt-free; if it isn't importable, fall back to an
+# identity function so the source (English) strings are used unchanged.
+try:
+    from i18n import _
+except Exception:  # pragma: no cover
+    def _(message: str) -> str:
+        """Identity fallback when no translation catalog is available."""
+        return message
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1010,6 +1021,268 @@ def check_pdf(pdf_path: str, hard_revocation: bool = False,
     print(f"\n{'='*70}\n")
 
 
+def build_signature_data(pdf_path: str, *, cache_dir: str = "cache",
+                         refresh_cache: bool = False,
+                         hard_revocation: bool = False,
+                         lotl_url: str = DEFAULT_LOTL_URL,
+                         do_validate: bool = True,
+                         log_fetch: bool = False,
+                         log=lambda msg: None,
+                         progress=lambda done, total: None) -> dict:
+    """Produce the structured signature data shared by the GUI tree and JSON.
+
+    Returns a dict of the form::
+
+        {
+          "message": str | None,      # set instead of signatures (e.g. "no signatures")
+          "header":  str | None,      # "N signature(s) found in foo.pdf"
+          "trust_note": str | None,   # trust-anchor summary
+          "signatures": [
+            {
+              "title":   "Signature #1",
+              "field":   "Signature1",
+              "verdict": "QUALIFIED e-signature — natural person …",
+              "error":   str | None,
+              "groups":  [ {"name": "Signer certificate",
+                            "rows": [("Common name", "Jan Novak"), …]}, … ],
+            }, …
+          ],
+        }
+
+    Args:
+        pdf_path: path to the PDF to analyse.
+        cache_dir: on-disk LOTL/TL XML cache directory.
+        refresh_cache: force a re-download of the trusted lists.
+        hard_revocation: require and fetch OCSP/CRL revocation information.
+        lotl_url: the List-of-Trusted-Lists URL.
+        do_validate: when False, skip the TL download and validation (offline).
+        log_fetch: when True, fetch activity prints to stdout (errors to stderr).
+        log: progress-message callback (str -> None) for the GUI status bar.
+        progress: numeric progress callback (done, total); total == 0 => busy.
+    """
+    qc_parser = QcStatementParser()
+    result = {"message": None, "header": None, "trust_note": None, "signatures": []}
+
+    with SignedPdf(pdf_path) as pdf:
+        if not pdf.has_signatures:
+            result["message"] = _("No signatures found in this PDF.")
+            return result
+
+        result["header"] = _("%(count)d signature(s) found in %(name)s") % {
+            "count": len(pdf.signatures), "name": Path(pdf_path).name}
+
+        # Optionally build the trust anchor set from the EU Trusted Lists.
+        vc = None
+        if do_validate:
+            try:
+                progress(0, 0)  # indeterminate: fetching LOTL
+                log("Downloading EU Trusted Lists…")
+                cache = XmlCache(cache_dir=cache_dir, force_refresh=refresh_cache,
+                                 verbose=log_fetch)
+                client = EuTrustedListClient(lotl_url=lotl_url, cache=cache,
+                                             verbose=log_fetch)
+
+                def _tl_progress(done, total, country):
+                    """Per-TL progress callback: update the bar and status text.
+
+                    Args:
+                        done: national lists processed so far.
+                        total: total number of national lists.
+                        country: ISO code of the list just processed.
+                    """
+                    progress(done, total)
+                    log(f"Trusted Lists: {done}/{total} ({country})")
+
+                certs = client.all_qualified_ca_certs(progress=_tl_progress)
+                vc = (ValidationContextBuilder(allow_revocation_fetch=hard_revocation)
+                      .add_certs(certs).build())
+                result["trust_note"] = _("Trust anchors: %(count)d qualified CA certs from EU TLs") % {
+                    "count": len(certs)}
+                log(f"Collected {len(certs)} qualified CA certificate(s).")
+            except Exception as e:
+                result["trust_note"] = f"EU Trusted Lists unavailable: {e} — trust not checked"
+                vc = ValidationContextBuilder().build()  # empty trust store
+                log(f"Trusted List download failed: {e}")
+        else:
+            result["trust_note"] = "Validation skipped (--no-validate)"
+
+        for i, sig in enumerate(pdf.signatures, 1):
+            entry = {"title": f"Signature #{i}", "field": sig.field_name,
+                     "verdict": "", "error": None, "groups": []}
+
+            if sig.error or sig.signer_cert is None:
+                entry["verdict"] = _("Could not extract signer certificate")
+                entry["error"] = sig.error
+                result["signatures"].append(entry)
+                continue
+
+            sc = sig.signer_cert
+            signer_rows = [
+                ("Common name", cert_subject_cn(sc)),
+                ("Subject", sc.subject.rfc4514_string()),
+                ("Issuer", sc.issuer.rfc4514_string()),
+                ("Serial", f"{sc.serial_number:x}"),
+                ("Valid from", str(sc.not_valid_before_utc)),
+                ("Valid until", str(sc.not_valid_after_utc)),
+                ("Chain certs", str(len(sig.chain))),
+            ]
+            if sig.coverage:
+                signer_rows.append(("Coverage", sig.coverage))
+            entry["groups"].append({"name": "Signer certificate", "rows": signer_rows})
+
+            # Cryptographic validation (run once, reused for the verdict)
+            v = pdf.validate(sig, vc) if vc is not None else None
+            if v is not None:
+                val_rows = []
+                if v.error:
+                    val_rows.append(("Validation error", v.error))
+                val_rows += [
+                    ("Intact (unmodified)", str(v.intact)),
+                    ("CMS signature valid", str(v.valid)),
+                    ("Chains to EU TL trust anchor", str(v.trusted)),
+                    ("Revoked", str(v.revoked)),
+                ]
+                entry["groups"].append({"name": "Validation", "rows": val_rows})
+
+            qc = qc_parser.parse_signature(sig)
+            qc_rows = [("Present", str(qc.has_qc_statements))]
+            if qc.has_qc_statements:
+                qc_rows += [
+                    ("QcCompliance (is qualified)", str(qc.qc_compliance)),
+                    ("QcSSCD (key in secure device)", str(qc.qc_sscd)),
+                    ("QcType esign (natural person)", str(qc.qct_esign)),
+                    ("QcType eseal (legal person)", str(qc.qct_eseal)),
+                    ("QcType web authentication", str(qc.qct_web)),
+                ]
+                if qc.statement_ids:
+                    qc_rows.append(("Statement IDs", ", ".join(qc.statement_ids)))
+                if qc.qc_type_oids:
+                    qc_rows.append(("QcType values", ", ".join(qc.qc_type_oids)))
+            entry["groups"].append({"name": "QCStatements (ETSI EN 319 412-5)", "rows": qc_rows})
+
+            # Verdict
+            if v is not None:
+                sound = v.valid and v.intact
+                fully = sound and v.trusted and not v.revoked
+                if fully and qc.is_qualified_natural_person:
+                    entry["verdict"] = _("QUALIFIED e-signature — natural person (eIDAS Art. 3(12))")
+                elif fully and qc.is_qualified_legal_person:
+                    entry["verdict"] = _("QUALIFIED e-seal — legal person (eIDAS Art. 3(27))")
+                elif fully:
+                    entry["verdict"] = _("Trusted, but cert lacks a qualified-signature QCStatement")
+                elif sound:
+                    entry["verdict"] = _("Cryptographically valid, but not chaining to an EU TL anchor")
+                else:
+                    entry["verdict"] = _("Failed cryptographic validation (modified/invalid/revoked)")
+            else:
+                entry["verdict"] = (
+                    _("Cert carries qualified natural-person QCStatements (validation skipped)")
+                    if qc.is_qualified_natural_person else _("Validation skipped")
+                )
+
+            result["signatures"].append(entry)
+
+    return result
+
+
+def _disp(text: str, *, strong: bool = False, em: bool = False) -> str:
+    """Build a display label: HTML-escape the text, then optionally emphasise it.
+
+    Only ``<strong>`` and ``<em>`` are ever emitted; all caller-supplied text is
+    escaped first so no other markup can leak into the output.
+
+    Args:
+        text: the raw label text.
+        strong: wrap the result in ``<strong>…</strong>``.
+        em: wrap the result in ``<em>…</em>``.
+    Returns:
+        A display-safe label string.
+    """
+    out = html.escape(str(text), quote=False)
+    if strong:
+        out = f"<strong>{out}</strong>"
+    if em:
+        out = f"<em>{out}</em>"
+    return out
+
+
+def build_display_tree(data: dict) -> list:
+    """Convert structured signature data into an opaque display tree.
+
+    The result mirrors exactly what the GUI's QTreeView shows, but as plain,
+    self-describing nodes meant only for rendering (e.g. on a web page). Each
+    node is::
+
+        {"label": "<display string>", "children": [ <node>, … ]}
+
+    ``label`` is display-ready text in which the only markup is ``<strong>`` /
+    ``<em>`` (everything else is HTML-escaped); ``children`` is omitted for
+    leaves. A consumer renders labels and nesting without needing to understand
+    any of the underlying semantics.
+
+    Args:
+        data: a dict as returned by :func:`build_signature_data`.
+    Returns:
+        A list of top-level display nodes.
+    """
+    nodes = []
+    if data.get("message"):
+        nodes.append({"label": _disp(data["message"])})
+    if data.get("header"):
+        nodes.append({"label": _disp(data["header"])})
+    if data.get("trust_note"):
+        nodes.append({"label": _disp(data["trust_note"])})
+
+    for sig in data.get("signatures", []):
+        # Top node: title + verdict on two lines, both bold (mirrors the tree).
+        label = _disp(sig.get("title", ""), strong=True)
+        if sig.get("verdict"):
+            label += "\n" + _disp(sig["verdict"], strong=True)
+
+        children = []
+        if sig.get("field"):
+            children.append({"label": _disp(f"Field: {sig['field']}")})
+        if sig.get("error"):
+            children.append({"label": _disp(f"Error: {sig['error']}")})
+        for group in sig.get("groups", []):
+            group_node = {
+                "label": _disp(group["name"]),
+                "children": [{"label": _disp(f"{k}: {v}")} for k, v in group["rows"]],
+            }
+            children.append(group_node)
+
+        node = {"label": label}
+        if children:
+            node["children"] = children
+        nodes.append(node)
+
+    return nodes
+
+
+def build_display_tree_json(pdf_path: str, *, indent: "int | None" = 2,
+                            **kwargs) -> str:
+    """Analyse a PDF and return the display tree as a JSON string.
+
+    Convenience wrapper around :func:`build_signature_data` +
+    :func:`build_display_tree`.
+
+    Args:
+        pdf_path: path to the PDF to analyse.
+        indent: ``json.dumps`` indentation (None for compact output).
+        **kwargs: forwarded to :func:`build_signature_data` (cache_dir,
+            do_validate, refresh_cache, hard_revocation, lotl_url, …).
+    Returns:
+        A JSON document ``{"format", "version", "tree": [...]}``.
+    """
+    data = build_signature_data(pdf_path, **kwargs)
+    payload = {
+        "format": "sigviewer-display-tree",
+        "version": 1,
+        "tree": build_display_tree(data),
+    }
+    return json.dumps(payload, indent=indent, ensure_ascii=False)
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     """Command-line entry point.
 
@@ -1032,11 +1305,27 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--max-age-hours", type=float, default=24.0, metavar="H",
                     help="Re-download a cached XML once its file is older than "
                          "this many hours (default: 24)")
+    ap.add_argument("--json-output", action="store_true",
+                    help="Print the results as an opaque display-tree JSON "
+                         "(the same structure shown in the GUI tree), for "
+                         "rendering elsewhere (e.g. on the web). Only this JSON "
+                         "is written to stdout.")
     args = ap.parse_args(argv)
 
     if not Path(args.pdf).exists():
         print(f"File not found: {args.pdf}")
         return 1
+
+    if args.json_output:
+        # Machine-readable output only: keep stdout clean (no fetch logging).
+        print(build_display_tree_json(
+            args.pdf,
+            cache_dir=args.cache,
+            refresh_cache=args.refresh_cache,
+            hard_revocation=args.hard_revocation,
+            lotl_url=args.lotl_url,
+        ))
+        return 0
 
     check_pdf(args.pdf, hard_revocation=args.hard_revocation, lotl_url=args.lotl_url,
               cache_dir=args.cache, refresh_cache=args.refresh_cache,

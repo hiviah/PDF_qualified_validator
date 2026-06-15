@@ -32,6 +32,7 @@ from qt_compat import (
 from check_eu_signatures import (
     SignedPdf, EuTrustedListClient, XmlCache, ValidationContextBuilder,
     QcStatementParser, cert_subject_cn, DEFAULT_LOTL_URL, default_cache_dir,
+    build_signature_data,
 )
 from i18n import _, install_language
 
@@ -43,160 +44,13 @@ UI_FILE = Path(__file__).with_name("signature_viewer.ui")
 # Report generation (pure logic — no Qt — so it can run on a worker thread)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def build_signature_data(pdf_path: str, *, cache_dir: str = "cache",
-                         refresh_cache: bool = False,
-                         hard_revocation: bool = False,
-                         lotl_url: str = DEFAULT_LOTL_URL,
-                         do_validate: bool = True,
-                         log_fetch: bool = False,
-                         log=lambda msg: None,
-                         progress=lambda done, total: None) -> dict:
-    """
-    Produce structured data for the results tree:
+# ══════════════════════════════════════════════════════════════════════════════
+# Report generation lives in check_eu_signatures.build_signature_data (Qt-free),
+# so the GUI tree and the core's --json-output share one source of truth.
+# ══════════════════════════════════════════════════════════════════════════════
 
-        {
-          "message": str | None,         # set instead of signatures (e.g. "no signatures")
-          "header":  str | None,         # "N signature(s) found in foo.pdf"
-          "trust_note": str | None,      # trust-anchor summary
-          "signatures": [
-            {
-              "title":   "Signature #1",
-              "field":   "Signature1",
-              "verdict": "QUALIFIED e-signature — natural person …",
-              "error":   str | None,
-              "groups":  [ {"name": "Signer certificate",
-                            "rows": [("Common name", "Jan Novak"), …]}, … ],
-            }, …
-          ],
-        }
 
-    log:       progress-message callback (str -> None), shown in the status bar.
-    progress:  numeric progress callback (done, total); total == 0 => busy phase.
-    log_fetch: when True, fetch activity prints to stdout (errors to stderr).
-    """
-    qc_parser = QcStatementParser()
-    result = {"message": None, "header": None, "trust_note": None, "signatures": []}
-
-    with SignedPdf(pdf_path) as pdf:
-        if not pdf.has_signatures:
-            result["message"] = _("No signatures found in this PDF.")
-            return result
-
-        result["header"] = _("%(count)d signature(s) found in %(name)s") % {
-            "count": len(pdf.signatures), "name": Path(pdf_path).name}
-
-        # Optionally build the trust anchor set from the EU Trusted Lists.
-        vc = None
-        if do_validate:
-            try:
-                progress(0, 0)  # indeterminate: fetching LOTL
-                log("Downloading EU Trusted Lists…")
-                cache = XmlCache(cache_dir=cache_dir, force_refresh=refresh_cache,
-                                 verbose=log_fetch)
-                client = EuTrustedListClient(lotl_url=lotl_url, cache=cache,
-                                             verbose=log_fetch)
-
-                def _tl_progress(done, total, country):
-                    """Per-TL progress callback: update the bar and status text.
-
-                    Args:
-                        done: national lists processed so far.
-                        total: total number of national lists.
-                        country: ISO code of the list just processed.
-                    """
-                    progress(done, total)
-                    log(f"Trusted Lists: {done}/{total} ({country})")
-
-                certs = client.all_qualified_ca_certs(progress=_tl_progress)
-                vc = (ValidationContextBuilder(allow_revocation_fetch=hard_revocation)
-                      .add_certs(certs).build())
-                result["trust_note"] = _("Trust anchors: %(count)d qualified CA certs from EU TLs") % {
-                    "count": len(certs)}
-                log(f"Collected {len(certs)} qualified CA certificate(s).")
-            except Exception as e:
-                result["trust_note"] = f"EU Trusted Lists unavailable: {e} — trust not checked"
-                vc = ValidationContextBuilder().build()  # empty trust store
-                log(f"Trusted List download failed: {e}")
-        else:
-            result["trust_note"] = "Validation skipped (--no-validate)"
-
-        for i, sig in enumerate(pdf.signatures, 1):
-            entry = {"title": f"Signature #{i}", "field": sig.field_name,
-                     "verdict": "", "error": None, "groups": []}
-
-            if sig.error or sig.signer_cert is None:
-                entry["verdict"] = _("Could not extract signer certificate")
-                entry["error"] = sig.error
-                result["signatures"].append(entry)
-                continue
-
-            sc = sig.signer_cert
-            signer_rows = [
-                ("Common name", cert_subject_cn(sc)),
-                ("Subject", sc.subject.rfc4514_string()),
-                ("Issuer", sc.issuer.rfc4514_string()),
-                ("Serial", f"{sc.serial_number:x}"),
-                ("Valid from", str(sc.not_valid_before_utc)),
-                ("Valid until", str(sc.not_valid_after_utc)),
-                ("Chain certs", str(len(sig.chain))),
-            ]
-            if sig.coverage:
-                signer_rows.append(("Coverage", sig.coverage))
-            entry["groups"].append({"name": "Signer certificate", "rows": signer_rows})
-
-            # Cryptographic validation (run once, reused for the verdict)
-            v = pdf.validate(sig, vc) if vc is not None else None
-            if v is not None:
-                val_rows = []
-                if v.error:
-                    val_rows.append(("Validation error", v.error))
-                val_rows += [
-                    ("Intact (unmodified)", str(v.intact)),
-                    ("CMS signature valid", str(v.valid)),
-                    ("Chains to EU TL trust anchor", str(v.trusted)),
-                    ("Revoked", str(v.revoked)),
-                ]
-                entry["groups"].append({"name": "Validation", "rows": val_rows})
-
-            qc = qc_parser.parse_signature(sig)
-            qc_rows = [("Present", str(qc.has_qc_statements))]
-            if qc.has_qc_statements:
-                qc_rows += [
-                    ("QcCompliance (is qualified)", str(qc.qc_compliance)),
-                    ("QcSSCD (key in secure device)", str(qc.qc_sscd)),
-                    ("QcType esign (natural person)", str(qc.qct_esign)),
-                    ("QcType eseal (legal person)", str(qc.qct_eseal)),
-                    ("QcType web authentication", str(qc.qct_web)),
-                ]
-                if qc.statement_ids:
-                    qc_rows.append(("Statement IDs", ", ".join(qc.statement_ids)))
-                if qc.qc_type_oids:
-                    qc_rows.append(("QcType values", ", ".join(qc.qc_type_oids)))
-            entry["groups"].append({"name": "QCStatements (ETSI EN 319 412-5)", "rows": qc_rows})
-
-            # Verdict
-            if v is not None:
-                sound = v.valid and v.intact
-                fully = sound and v.trusted and not v.revoked
-                if fully and qc.is_qualified_natural_person:
-                    entry["verdict"] = _("QUALIFIED e-signature — natural person (eIDAS Art. 3(12))")
-                elif fully and qc.is_qualified_legal_person:
-                    entry["verdict"] = _("QUALIFIED e-seal — legal person (eIDAS Art. 3(27))")
-                elif fully:
-                    entry["verdict"] = _("Trusted, but cert lacks a qualified-signature QCStatement")
-                elif sound:
-                    entry["verdict"] = _("Cryptographically valid, but not chaining to an EU TL anchor")
-                else:
-                    entry["verdict"] = _("Failed cryptographic validation (modified/invalid/revoked)")
-            else:
-                entry["verdict"] = (
-                    _("Cert carries qualified natural-person QCStatements (validation skipped)")
-                    if qc.is_qualified_natural_person else _("Validation skipped")
-                )
-
-            result["signatures"].append(entry)
-
-    return result
+# ══════════════════════════════════════════════════════════════════════════════
 
 
 # ══════════════════════════════════════════════════════════════════════════════
