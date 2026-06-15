@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import sys
 import os
+import tempfile
 import base64
 import logging
 import argparse
@@ -63,13 +64,29 @@ DEFAULT_LOTL_URL = "https://ec.europa.eu/tools/lotl/eu-lotl.xml"
 
 
 def default_cache_dir() -> str:
+    """Return the per-user cache directory, following each OS's convention.
+
+    The tool must work when launched from a read-only mount (e.g. an AppImage)
+    or from a directory the user can't write to, so it always resolves to a
+    writable per-user location:
+
+      * Windows: ``%LOCALAPPDATA%`` (falls back to ``%TEMP%`` / the system temp
+        dir) — the standard non-roaming per-user cache location.
+      * macOS:   ``~/Library/Caches``.
+      * Linux/Unix: ``$XDG_CACHE_HOME`` or ``~/.cache`` (XDG Base Directory).
+
+    Returns:
+        The ``sigviewer`` cache directory path for the current platform.
     """
-    Default on-disk cache location. Uses $XDG_CACHE_HOME (or ~/.cache) so the
-    tool works when launched from a read-only mount (e.g. an AppImage) or from
-    a directory the user can't write to.
-    """
-    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(
-        os.path.expanduser("~"), ".cache")
+    if os.name == "nt":  # Windows
+        base = (os.environ.get("LOCALAPPDATA")
+                or os.environ.get("TEMP")
+                or tempfile.gettempdir())
+    elif sys.platform == "darwin":  # macOS
+        base = os.path.join(os.path.expanduser("~"), "Library", "Caches")
+    else:  # Linux / other Unix — XDG Base Directory spec
+        base = os.environ.get("XDG_CACHE_HOME") or os.path.join(
+            os.path.expanduser("~"), ".cache")
     return os.path.join(base, "sigviewer")
 
 # ETSI TS 119 612 namespaces
