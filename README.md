@@ -89,3 +89,7 @@ There is one basic translation, for cs_CZ, which can be either triggered by `$LA
 or manually by `--lang=cs` on the command line. Debug and expert expressions are still in
 English (since they are not translatable), but things like main signature verdict and menus
 are translated.
+
+## Webapp
+
+The core is available as a simple webapp runnable via Flask or Gunicorn (see `webapp.py` and `flask_run.sh`).
