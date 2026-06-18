@@ -36,6 +36,13 @@ from werkzeug.utils import secure_filename
 from check_eu_signatures import (
     build_signature_data, build_display_tree, default_cache_dir,
 )
+from i18n import _, install_language
+
+# Activate the UI language once, at process start. SIGVIEWER_LANG (if set) wins;
+# otherwise install_language(None) falls back to the server's $LANG/$LC_* env,
+# and to English if no matching catalog exists. This is server-wide: a web
+# server's locale is per-process, not per browser request.
+install_language(os.environ.get("SIGVIEWER_LANG") or None)
 
 app = Flask(__name__)
 #: Reject uploads larger than this (bytes) — a simple abuse guard.
@@ -97,7 +104,11 @@ def _run_job(job_id: str, pdf_path: str, opts: dict) -> None:
 @app.get("/")
 def index() -> str:
     """Serve the single-page UI."""
-    return render_template_string(INDEX_HTML)
+    return render_template_string(
+        INDEX_HTML,
+        t_open=_("Open PDF…"),
+        t_validate=_("Validate against EU Trusted Lists"),
+    )
 
 
 @app.post("/analyze")
@@ -196,9 +207,9 @@ INDEX_HTML = r"""<!doctype html>
 <body>
 <header>
   <h1>EU Signature Viewer</h1>
-  <button class="open" id="openBtn">Open PDF…</button>
+  <button class="open" id="openBtn">{{ t_open }}</button>
   <label class="chk"><input type="checkbox" id="validate" checked>
-    Validate against EU Trusted Lists</label>
+    {{ t_validate }}</label>
   <span class="spacer"></span>
   <span class="muted" id="fileName" style="font-size:13px;color:var(--muted)"></span>
   <input type="file" id="fileInput" accept="application/pdf" hidden>

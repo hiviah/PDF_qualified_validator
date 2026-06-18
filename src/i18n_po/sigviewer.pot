@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: SigViewer 1.0\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-06-13 19:53+0000\n"
+"POT-Creation-Date: 2026-06-18 15:19+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,93 +17,55 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Generated-By: Babel 2.18.0\n"
 
-#: signature_viewer_core.py:83
-msgid "No signatures found in this PDF."
-msgstr ""
-
-#: signature_viewer_core.py:86
-#, python-format
-msgid "%(count)d signature(s) found in %(name)s"
-msgstr ""
-
-#: signature_viewer_core.py:107
-#, python-format
-msgid "Trust anchors: %(count)d qualified CA certs from EU TLs"
-msgstr ""
-
-#: signature_viewer_core.py:122
-msgid "Could not extract signer certificate"
-msgstr ""
-
-#: signature_viewer_core.py:176
-msgid "QUALIFIED e-signature — natural person (eIDAS Art. 3(12))"
-msgstr ""
-
-#: signature_viewer_core.py:178
-msgid "QUALIFIED e-seal — legal person (eIDAS Art. 3(27))"
-msgstr ""
-
-#: signature_viewer_core.py:180
-msgid "Trusted, but cert lacks a qualified-signature QCStatement"
-msgstr ""
-
-#: signature_viewer_core.py:182
-msgid "Cryptographically valid, but not chaining to an EU TL anchor"
-msgstr ""
-
-#: signature_viewer_core.py:184
-msgid "Failed cryptographic validation (modified/invalid/revoked)"
-msgstr ""
-
-#: signature_viewer_core.py:187
-msgid "Cert carries qualified natural-person QCStatements (validation skipped)"
-msgstr ""
-
-#: signature_viewer_core.py:188
-msgid "Validation skipped"
-msgstr ""
-
-#: signature_viewer_core.py:506
+#: signature_viewer_core.py:477
 msgid "File"
 msgstr ""
 
-#: signature_viewer_core.py:507
+#: signature_viewer_core.py:478
 msgid "Help"
 msgstr ""
 
-#: signature_viewer_core.py:508
+#: signature_viewer_core.py:479
 msgid "Open Recent"
 msgstr ""
 
-#: signature_viewer_core.py:509
+#: signature_viewer_core.py:480
 msgid "Open…"
 msgstr ""
 
-#: signature_viewer_core.py:510
+#: signature_viewer_core.py:481
 msgid "Quit"
 msgstr ""
 
-#: signature_viewer_core.py:511 signature_viewer_core.py:521
+#: signature_viewer_core.py:482 signature_viewer_core.py:493
 msgid "About"
 msgstr ""
 
-#: signature_viewer_core.py:513
+#: signature_viewer_core.py:484
 msgid "Zoom +"
 msgstr ""
 
-#: signature_viewer_core.py:514
+#: signature_viewer_core.py:485
 msgid "Zoom −"
 msgstr ""
 
-#: signature_viewer_core.py:515
+#: signature_viewer_core.py:486
 msgid "Refresh trust lists"
 msgstr ""
 
-#: signature_viewer_core.py:517
+#: signature_viewer_core.py:488
 msgid "Signatures & QCStatements"
 msgstr ""
 
-#: signature_viewer_core.py:522
+#: signature_viewer_core.py:494
 msgid "PDF qualified signature validation from EU TL CA roots PyQt utility."
+msgstr ""
+
+#: webapp.py:109
+msgid "Open PDF…"
+msgstr ""
+
+#: webapp.py:110
+msgid "Validate against EU Trusted Lists"
 msgstr ""
 

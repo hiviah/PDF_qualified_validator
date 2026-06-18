@@ -93,3 +93,6 @@ are translated.
 ## Webapp
 
 The core is available as a simple webapp runnable via Flask or Gunicorn (see `webapp.py` and `flask_run.sh`).
+
+Setting language to CZ (which is only non-English translation of the main results) can be done
+using `LANG=cs_CZ.UTF-8` and `SIGVIEWER_LANG=cs` before running.
