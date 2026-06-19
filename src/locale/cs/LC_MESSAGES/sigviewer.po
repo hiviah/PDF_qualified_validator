@@ -3,7 +3,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: SigViewer 1.0\n"
 "POT-Creation-Date: 2026-01-01 00:00+0000\n"
-"PO-Revision-Date: 2026-06-14 01:37+0200\n"
+"PO-Revision-Date: 2026-06-19 22:09+0200\n"
 "Last-Translator: SigViewer\n"
 "Language: cs\n"
 "Language-Team: cs\n"
@@ -18,10 +18,10 @@ msgid "No signatures found in this PDF."
 msgstr "V tomto PDF nebyly nalezeny žádné podpisy."
 
 msgid "%(count)d signature(s) found in %(name)s"
-msgstr "Počet podpisů  v %(name)s: %(count)d"
+msgstr "Nalezeno %(count)d podpisů v %(name)s"
 
 msgid "Trust anchors: %(count)d qualified CA certs from EU TLs"
-msgstr "Kořenové certifikáty: %(count)d kvalifikovaných certifikátů CA z EU TL"
+msgstr "Kotvy důvěry: %(count)d kvalifikovaných certifikátů CA z EU TL"
 
 msgid "Could not extract signer certificate"
 msgstr "Certifikát podepisující osoby se nepodařilo načíst"
@@ -72,10 +72,16 @@ msgid "Zoom −"
 msgstr "Oddálit"
 
 msgid "Refresh trust lists"
-msgstr "Stáhnout opět EU certifikáty"
+msgstr "Obnovit seznamy důvěry"
 
 msgid "Signatures & QCStatements"
 msgstr "Podpisy a QCStatements"
 
 msgid "PDF qualified signature validation from EU TL CA roots PyQt utility."
 msgstr "Nástroj PyQt pro ověřování kvalifikovaných podpisů PDF vůči kořenům CA z EU TL."
+
+msgid "Open PDF…"
+msgstr "Otevřít PDF…"
+
+msgid "Validate against EU Trusted Lists"
+msgstr "Ověřit vůči seznamům kvalifikovaných seznamů certifikátů EU"
