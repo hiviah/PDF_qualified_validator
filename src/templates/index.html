@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EU Signature Viewer</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header>
+  <h1>EU Signature Viewer</h1>
+  <button class="open" id="openBtn">{{ t_open }}</button>
+  <label class="chk"><input type="checkbox" id="validate" checked>
+    {{ t_validate }}</label>
+  <span class="spacer"></span>
+  <span class="muted" id="fileName" style="font-size:13px;color:var(--muted)"></span>
+  <input type="file" id="fileInput" accept="application/pdf" hidden>
+</header>
+
+<main>
+  <div class="progress-wrap" id="progressWrap">
+    <div class="progress-label" id="progressLabel">Working…</div>
+    <progress id="bar"></progress>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Signatures &amp; QCStatements</div>
+    <div id="tree"><div class="empty">Open a PDF to validate its signatures.</div></div>
+  </div>
+</main>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
