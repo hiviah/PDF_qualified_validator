@@ -2,10 +2,12 @@
 
 ## Overview
 
-This program takes main argument, a PDF file.
+This program has 3 frontends, each of which take one PDF file to check for signatures
+(command line, PyQt5/PyQt6, webapp via Flask or Gunicorn)
 
 Checks all signatures extracted from PDF against whether they are valid, whether
-they chain to the qualified CAs obtained from EU LOTL and national TLs.
+they chain to the qualified CAs obtained from EU LOTL and national TLs. Timestamps might
+not be yet validated due to insufficient test data.
 
 Checks `QcStatements` so that we know the signer certificate is qualified (person, seal...).
 
