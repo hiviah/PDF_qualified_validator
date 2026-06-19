@@ -30,7 +30,13 @@ import html
 import logging
 import argparse
 import time
+from contextlib import contextmanager
 from pathlib import Path
+
+try:
+    import fcntl  # POSIX advisory file locks (Linux/macOS)
+except ImportError:  # pragma: no cover - Windows has no fcntl
+    fcntl = None
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from typing import Optional, Iterable
@@ -437,13 +443,18 @@ class XmlCache:
         session: the ``requests.Session`` used for downloads.
         timeout: per-request timeout in seconds.
         verbose: when True, fetch/cache activity is printed.
+        _lock_wait_notify: optional callback(str) fired once when a cache lock
+            is contended (another thread/process is refreshing).
         _mem: in-run memo mapping cache path → parsed lxml root.
+        _refreshed: set of paths this process has already refreshed (so a
+            force_refresh run downloads each file at most once).
     """
 
     def __init__(self, cache_dir: str = "cache", max_age_hours: float = 24.0,
                  force_refresh: bool = False,
                  session: Optional[requests.Session] = None,
-                 timeout: int = 30, verbose: bool = True):
+                 timeout: int = 30, verbose: bool = True,
+                 lock_wait_notify=None):
         """Args:
             cache_dir: directory holding the cached LOTL/TL XML files.
             max_age_hours: age after which a cached file is considered stale.
@@ -451,6 +462,9 @@ class XmlCache:
             session: optional ``requests.Session`` (one is created if omitted).
             timeout: per-request timeout in seconds.
             verbose: when True, print fetch/cache activity (errors to stderr).
+            lock_wait_notify: optional callback(str) invoked once when a cache
+                lock can't be taken immediately (another thread/process is
+                refreshing), so callers can show progress or a status note.
         """
         self.cache_dir = Path(cache_dir)
         self.max_age_seconds = max_age_hours * 3600.0
@@ -458,7 +472,11 @@ class XmlCache:
         self.session = session or requests.Session()
         self.timeout = timeout
         self.verbose = verbose
+        self._lock_wait_notify = lock_wait_notify
         self._mem: dict[str, etree._Element] = {}
+        # Paths this process has already refreshed, so a force_refresh run
+        # downloads each file at most once even across many reader threads.
+        self._refreshed: set = set()
 
     def _log(self, msg: str, is_error: bool = False) -> None:
         """Print a log line when ``verbose`` is set.
@@ -469,6 +487,63 @@ class XmlCache:
         """
         if self.verbose:
             print(msg, file=sys.stderr if is_error else sys.stdout)
+
+    # ── reader/writer locking (threads and processes) ─────────────────────────
+    # A readers-writer lock per cache file via fcntl.flock on a sidecar
+    # "<file>.lock". LOCK_SH allows many concurrent readers; LOCK_EX gives a
+    # single writer exclusive access (readers block until it finishes). flock
+    # is advisory and tied to the open file description, so distinct open()
+    # calls — across threads or processes — contend correctly. No fcntl on
+    # Windows → degrades to a no-op (in-process only).
+    @staticmethod
+    def _lock_path(path: Path) -> Path:
+        """Return the sidecar lock-file path for a cache file."""
+        return path.with_name(path.name + ".lock")
+
+    def _notify_wait(self, msg: str) -> None:
+        """Report that lock acquisition is blocked (log + optional callback)."""
+        self._log(msg)
+        if self._lock_wait_notify is not None:
+            try:
+                self._lock_wait_notify(msg)
+            except Exception:  # pragma: no cover - never let notify break a fetch
+                pass
+
+    @contextmanager
+    def _file_lock(self, path: Path, *, exclusive: bool):
+        """Hold a shared (reader) or exclusive (writer) lock for ``path``.
+
+        Tries a non-blocking acquire first; if that would block (someone else
+        holds a conflicting lock), notifies once via ``_notify_wait`` — so a
+        waiting reader can show progress / a "cache is being updated" note —
+        then blocks until granted. Released on exit.
+
+        Args:
+            path: the cache file being guarded (lock is on ``<path>.lock``).
+            exclusive: True for a writer (LOCK_EX), False for a reader (LOCK_SH).
+        """
+        if fcntl is None:  # no flock on this platform → no cross-process lock
+            yield
+            return
+        lock_path = self._lock_path(path)
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o644)
+        mode = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+        try:
+            try:
+                fcntl.flock(fd, mode | fcntl.LOCK_NB)
+            except (BlockingIOError, OSError):
+                what = "refresh" if exclusive else "read"
+                self._notify_wait(
+                    f"  [lock] waiting to {what} {path.name}: another "
+                    f"process/thread is updating the trust-list cache…")
+                fcntl.flock(fd, mode)  # blocking acquire
+            yield
+        finally:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
 
     # ── path layout ──────────────────────────────────────────────────────────
     def lotl_path(self) -> Path:
@@ -569,23 +644,41 @@ class XmlCache:
         if url in self._mem:
             return self._mem[url]
 
-        root: Optional[etree._Element] = None
-        if self._is_stale(path, check_next_update):
-            content = self._download(url, label)
-            if content is not None:
-                try:
-                    root = etree.fromstring(content)
-                    self._write(path, content)  # only persist if it parses
-                except Exception as e:
-                    self._log(f"  [warn] {label}: downloaded content didn't parse: {e}",
-                              is_error=True)
-                    root = None
-            if root is None and path.exists():
-                self._log(f"  [info] {label}: using stale cached copy after fetch failure")
+        # Fast path under a SHARED (reader) lock: if the file is fresh, read it.
+        # Many readers proceed concurrently; they block only while a writer is
+        # actively refreshing this file.
+        with self._file_lock(path, exclusive=False):
+            if path not in self._refreshed and not self._is_stale(path, check_next_update):
+                self._log(f"  [cache] {label} (fresh on disk)")
                 root = self._load(path)
-        else:
-            self._log(f"  [cache] {label} (fresh on disk)")
-            root = self._load(path)
+                if root is not None:
+                    self._mem[url] = root
+                    return root
+
+        # Refresh needed → EXCLUSIVE (writer) lock. Re-check under the lock: a
+        # writer in another thread/process may have refreshed it while we waited,
+        # so we don't download twice.
+        with self._file_lock(path, exclusive=True):
+            root = None
+            if path in self._refreshed:
+                root = self._load(path)
+            elif not self._is_stale(path, check_next_update):
+                self._log(f"  [cache] {label} (refreshed by another worker)")
+                root = self._load(path)
+            else:
+                content = self._download(url, label)
+                if content is not None:
+                    try:
+                        root = etree.fromstring(content)
+                        self._write(path, content)  # only persist if it parses
+                        self._refreshed.add(path)
+                    except Exception as e:
+                        self._log(f"  [warn] {label}: downloaded content didn't parse: {e}",
+                                  is_error=True)
+                        root = None
+                if root is None and path.exists():
+                    self._log(f"  [info] {label}: using stale cached copy after fetch failure")
+                    root = self._load(path)
 
         if root is not None:
             self._mem[url] = root
@@ -1077,8 +1170,15 @@ def build_signature_data(pdf_path: str, *, cache_dir: str = "cache",
             try:
                 progress(0, 0)  # indeterminate: fetching LOTL
                 log("Downloading EU Trusted Lists…")
+
+                def _on_lock_wait(msg):
+                    # Another worker holds the cache lock: keep the bar busy and
+                    # surface the note so the user knows why we're waiting.
+                    progress(0, 0)
+                    log(msg.strip())
+
                 cache = XmlCache(cache_dir=cache_dir, force_refresh=refresh_cache,
-                                 verbose=log_fetch)
+                                 verbose=log_fetch, lock_wait_notify=_on_lock_wait)
                 client = EuTrustedListClient(lotl_url=lotl_url, cache=cache,
                                              verbose=log_fetch)
 
