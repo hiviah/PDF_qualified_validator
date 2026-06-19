@@ -1107,7 +1107,7 @@ def build_signature_data(pdf_path: str, *, cache_dir: str = "cache",
             result["trust_note"] = "Validation skipped (--no-validate)"
 
         for i, sig in enumerate(pdf.signatures, 1):
-            entry = {"title": f"Signature #{i}", "field": sig.field_name,
+            entry = {"title": _("Signature #%(n)d") % {"n": i}, "field": sig.field_name,
                      "verdict": "", "error": None, "groups": []}
 
             if sig.error or sig.signer_cert is None:

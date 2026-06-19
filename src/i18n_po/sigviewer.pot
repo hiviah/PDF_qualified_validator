@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: SigViewer 1.0\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-06-18 15:19+0000\n"
+"POT-Creation-Date: 2026-06-19 20:25+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -16,6 +16,57 @@ msgstr ""
 "Content-Type: text/plain; charset=utf-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Generated-By: Babel 2.18.0\n"
+
+#: check_eu_signatures.py:1068
+msgid "No signatures found in this PDF."
+msgstr ""
+
+#: check_eu_signatures.py:1071
+#, python-format
+msgid "%(count)d signature(s) found in %(name)s"
+msgstr ""
+
+#: check_eu_signatures.py:1099
+#, python-format
+msgid "Trust anchors: %(count)d qualified CA certs from EU TLs"
+msgstr ""
+
+#: check_eu_signatures.py:1110
+#, python-format
+msgid "Signature #%(n)d"
+msgstr ""
+
+#: check_eu_signatures.py:1114
+msgid "Could not extract signer certificate"
+msgstr ""
+
+#: check_eu_signatures.py:1168
+msgid "QUALIFIED e-signature — natural person (eIDAS Art. 3(12))"
+msgstr ""
+
+#: check_eu_signatures.py:1170
+msgid "QUALIFIED e-seal — legal person (eIDAS Art. 3(27))"
+msgstr ""
+
+#: check_eu_signatures.py:1172
+msgid "Trusted, but cert lacks a qualified-signature QCStatement"
+msgstr ""
+
+#: check_eu_signatures.py:1174
+msgid "Cryptographically valid, but not chaining to an EU TL anchor"
+msgstr ""
+
+#: check_eu_signatures.py:1176
+msgid "Failed cryptographic validation (modified/invalid/revoked)"
+msgstr ""
+
+#: check_eu_signatures.py:1179
+msgid "Cert carries qualified natural-person QCStatements (validation skipped)"
+msgstr ""
+
+#: check_eu_signatures.py:1180
+msgid "Validation skipped"
+msgstr ""
 
 #: signature_viewer_core.py:477
 msgid "File"
