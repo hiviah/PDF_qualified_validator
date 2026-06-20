@@ -1,0 +1,14 @@
+# Web deployment dependencies (no PyQt — the server runs the Qt-free core only).
+# Install into a venv:  python3 -m venv venv && venv/bin/pip install -r requirements-web.txt
+Flask>=3.0
+gunicorn>=21.0
+PyMuPDF>=1.24          # provides 'fitz' (manylinux wheel, no compiler needed)
+cryptography>=42.0     # manylinux wheel
+lxml>=5.0              # manylinux wheel
+requests>=2.31
+asn1crypto>=1.5
+pyhanko>=0.25
+pyhanko-certvalidator>=0.26
+# Babel is only needed if you compile translations on the server
+# (otherwise ship the precompiled locale/<lang>/LC_MESSAGES/*.mo files).
+# Babel>=2.14

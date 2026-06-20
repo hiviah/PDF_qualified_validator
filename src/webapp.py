@@ -29,6 +29,7 @@ import tempfile
 import threading
 
 from flask import Flask, request, jsonify, abort, render_template
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
 
 from check_eu_signatures import (
@@ -43,6 +44,10 @@ from i18n import _, install_language
 install_language(os.environ.get("SIGVIEWER_LANG") or None)
 
 app = Flask(__name__)
+# Behind a trusted reverse proxy (nginx): honour X-Forwarded-* headers, so the
+# app can be mounted under a subpath (X-Forwarded-Prefix) and generate correct
+# URLs. Only enable this when actually behind a proxy you control.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 #: Reject uploads larger than this (bytes) — a simple abuse guard.
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB
 

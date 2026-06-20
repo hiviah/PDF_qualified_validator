@@ -12,6 +12,10 @@ const bar = document.getElementById('bar');
 
 let pollTimer = null;
 
+// Mount prefix (empty at the domain root, e.g. "/abc123/PDF_validator" behind
+// a reverse proxy). Injected by the template from Flask's request.script_root.
+const ROOT = window.APP_ROOT || "";
+
 openBtn.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', () => {
   if (fileInput.files.length) upload(fileInput.files[0]);
@@ -38,7 +42,7 @@ function upload(file) {
   fd.append('pdf', file);
   fd.append('validate', validate.checked ? 'true' : 'false');
 
-  fetch('/analyze', { method: 'POST', body: fd })
+  fetch(ROOT + '/analyze', { method: 'POST', body: fd })
     .then(r => r.ok ? r.json() : r.text().then(t => Promise.reject(t)))
     .then(({ job_id }) => poll(job_id))
     .catch(err => showError(String(err)));
@@ -47,7 +51,7 @@ function upload(file) {
 function poll(jobId) {
   setBusy('Working…');
   pollTimer = setInterval(() => {
-    fetch('/status/' + jobId)
+    fetch(ROOT + '/status/' + jobId)
       .then(r => r.ok ? r.json() : Promise.reject('status ' + r.status))
       .then(s => {
         if (s.state === 'running') {

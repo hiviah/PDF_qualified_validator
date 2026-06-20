@@ -1,0 +1,37 @@
+# /etc/systemd/system/pdf_validator.service
+#
+# Runs the SigViewer web app under gunicorn, bound to localhost; nginx proxies
+# to it. SINGLE worker + threads is required: the job store and the cache lock
+# are in-process, so multiple worker *processes* would not share them.
+[Unit]
+Description=PDF Validator (SigViewer web interface)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/pdf_validator
+# Writable, persistent cache for the EU Trusted Lists (default_cache_dir() uses
+# $XDG_CACHE_HOME); must be owned by the service user.
+Environment=XDG_CACHE_HOME=/var/cache/pdf_validator
+# UI language: 'en' (default), 'cs', … (must have a compiled locale/<lang> catalog)
+Environment=SIGVIEWER_LANG=en
+ExecStart=/opt/pdf_validator/venv/bin/gunicorn \
+    --workers 1 --threads 8 \
+    --bind 127.0.0.1:8000 \
+    --timeout 120 \
+    webapp:app
+Restart=on-failure
+RestartSec=2
+
+# Light hardening (optional but cheap)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/cache/pdf_validator
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

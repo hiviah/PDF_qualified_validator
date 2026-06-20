@@ -30,6 +30,7 @@ import html
 import logging
 import argparse
 import time
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -704,6 +705,43 @@ class XmlCache:
                          check_next_update=False, label=f"TL [{country}]")
 
 
+#: Process-level memo of the extracted qualified-CA certs, so a long-lived
+#: process (e.g. a gunicorn worker) doesn't re-parse every national Trusted List
+#: on each request. The disk cache only avoids re-DOWNLOADING; this avoids the
+#: far costlier re-PARSE + re-extract. Keyed by (cache_dir, lotl_url).
+_PROC_CERTS_MEMO: dict = {}
+_PROC_CERTS_LOCK = threading.Lock()
+#: Re-extract at most this often even if the on-disk fingerprint looks unchanged
+#: (bounds how long a warm worker may serve certs without re-checking freshness).
+PROC_CERTS_TTL = 900.0  # seconds
+
+
+def _tl_cache_fingerprint(cache: "XmlCache") -> tuple:
+    """Cheap fingerprint of the on-disk TL cache: (path, mtime) per file.
+
+    Covers the LOTL and every cached national TL (``cache_dir/<ISO>/TL.xml``).
+    It changes whenever any list is refreshed — by this or another process — so
+    the process-level cert memo invalidates correctly. Stat-ing ~30 files costs
+    microseconds, versus parsing them which costs the time we're trying to save.
+    """
+    fp = []
+    lotl = cache.lotl_path()
+    try:
+        fp.append((str(lotl), lotl.stat().st_mtime))
+    except OSError:
+        fp.append((str(lotl), 0.0))
+    try:
+        for nat in sorted(cache.cache_dir.glob("*/TL.xml")):
+            try:
+                fp.append((str(nat), nat.stat().st_mtime))
+            except OSError:
+                pass
+    except OSError:
+        pass
+    return tuple(fp)
+
+
+
 class EuTrustedListClient:
     """
     Resolves the EU LOTL into national Trusted List URLs and the qualified-CA
@@ -810,8 +848,29 @@ class EuTrustedListClient:
         progress:  optional callable(done:int, total:int, country:str) invoked
                    before each national TL is consulted, for UI progress bars.
         """
+        # Per-instance fast path (within a single analysis).
         if countries is None and self._all_certs is not None:
             return self._all_certs
+
+        # Process-level fast path (across requests in a long-lived worker):
+        # reuse previously extracted certs if the on-disk cache is unchanged and
+        # within the TTL. This avoids re-parsing ~30 national TLs every request.
+        use_proc_memo = countries is None and not self.cache.force_refresh
+        memo_key = (str(self.cache.cache_dir), self.lotl_url)
+        if use_proc_memo:
+            fp = _tl_cache_fingerprint(self.cache)
+            with _PROC_CERTS_LOCK:
+                ent = _PROC_CERTS_MEMO.get(memo_key)
+            if ent is not None and ent[0] == fp and (time.monotonic() - ent[2]) < PROC_CERTS_TTL:
+                self._all_certs = ent[1]
+                if progress is not None:
+                    try:
+                        progress(1, 1, "cache")  # already warm → finish instantly
+                    except Exception:
+                        pass
+                self._log(f"  [memo] reusing {len(ent[1])} qualified CA certs "
+                          f"(in-process cache)")
+                return ent[1]
 
         wanted = {c.upper() for c in countries} if countries else None
         entries = [e for e in self.national_tl_urls()
@@ -834,6 +893,11 @@ class EuTrustedListClient:
 
         if countries is None:
             self._all_certs = certs
+        if use_proc_memo:
+            # Fingerprint AFTER extraction so it reflects any just-refreshed files.
+            fp_after = _tl_cache_fingerprint(self.cache)
+            with _PROC_CERTS_LOCK:
+                _PROC_CERTS_MEMO[memo_key] = (fp_after, certs, time.monotonic())
         return certs
 
 
