@@ -69,7 +69,7 @@ Though here's a repo which will at least allow you to see signature check:
 
 https://github.com/esig/dss/tree/master/dss-pades/src/test/resources
 
-## Build into AppImage
+## Build into AppImage (PyQt5 default)
 
 Goto `appimage/` directory. Then run:
 
@@ -84,6 +84,11 @@ Application stores state in XDG cache, usually located in `~/.cache/sigviewer`.
 This is a shortcut so that people can set the layout and have it permanent as
 they like. If you want to reset it for some reason, use `--reset-layout` command
 line paramater.
+
+### RWLock for cache
+
+Since there is option to run the application as web application, it needed to be ensured that
+"check and download" + "check and load fresh" are atomically protected by a RWLock.
 
 ## Translation
 
