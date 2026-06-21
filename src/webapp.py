@@ -149,7 +149,11 @@ def analyze():
             "tree": None, "error": None, "created": time.time(),
         }
 
-    opts = dict(do_validate=do_validate, cache_dir=CACHE_DIR)
+    # Set SIGVIEWER_LOG_FETCH=1 to log per-request cache activity to stderr
+    # (journalctl): "[cache] … (fresh on disk)" vs "[fetch] …" vs "[memo] …".
+    # The fastest way to see whether the service reads the cache or re-downloads.
+    opts = dict(do_validate=do_validate, cache_dir=CACHE_DIR,
+                log_fetch=bool(os.environ.get("SIGVIEWER_LOG_FETCH")))
     threading.Thread(target=_run_job, args=(job_id, path, opts), daemon=True).start()
     return jsonify(job_id=job_id)
 
