@@ -77,11 +77,14 @@ DEFAULT_LOTL_URL = "https://ec.europa.eu/tools/lotl/eu-lotl.xml"
 
 
 def default_cache_dir() -> str:
-    """Return the per-user cache directory, following each OS's convention.
+    """Return the cache directory for the LOTL/TL XML files.
 
-    The tool must work when launched from a read-only mount (e.g. an AppImage)
-    or from a directory the user can't write to, so it always resolves to a
-    writable per-user location:
+    An explicit ``$SIGVIEWER_CACHE_DIR`` always wins — set it in deployments
+    (e.g. systemd) so the service and a cron prefill share one fixed, writable
+    path and don't disagree because of sandboxing (ProtectSystem/ProtectHome) or
+    a ``$HOME`` that points at an ephemeral RuntimeDirectory. Otherwise it falls
+    back to each OS's per-user convention, so the tool still works when launched
+    from a read-only mount (e.g. an AppImage):
 
       * Windows: ``%LOCALAPPDATA%`` (falls back to ``%TEMP%`` / the system temp
         dir) — the standard non-roaming per-user cache location.
@@ -89,8 +92,12 @@ def default_cache_dir() -> str:
       * Linux/Unix: ``$XDG_CACHE_HOME`` or ``~/.cache`` (XDG Base Directory).
 
     Returns:
-        The ``sigviewer`` cache directory path for the current platform.
+        The cache directory path. When ``$SIGVIEWER_CACHE_DIR`` is set it is used
+        verbatim; otherwise the platform location with a ``sigviewer`` subdir.
     """
+    explicit = os.environ.get("SIGVIEWER_CACHE_DIR")
+    if explicit:
+        return explicit
     if os.name == "nt":  # Windows
         base = (os.environ.get("LOCALAPPDATA")
                 or os.environ.get("TEMP")
@@ -1379,6 +1386,7 @@ def refresh_cache(cache_dir: str, *, lotl_url: str = DEFAULT_LOTL_URL,
     cache = XmlCache(cache_dir=cache_dir, force_refresh=force,
                      max_age_hours=max_age_hours, verbose=verbose)
     client = EuTrustedListClient(lotl_url=lotl_url, cache=cache, verbose=verbose)
+    print(f"[cache] writing to: {Path(cache_dir).resolve()}", file=sys.stderr)
 
     def _prog(done, total, country):
         if verbose:
@@ -1419,7 +1427,16 @@ def main(argv: Optional[list[str]] = None) -> int:
                          "(the same structure shown in the GUI tree), for "
                          "rendering elsewhere (e.g. on the web). Only this JSON "
                          "is written to stdout.")
+    ap.add_argument("--print-cache-dir", action="store_true",
+                    help="Print the resolved cache directory (honouring "
+                         "$SIGVIEWER_CACHE_DIR / $XDG_CACHE_HOME / --cache) and "
+                         "exit. Run it with the SAME environment as the service "
+                         "to see exactly which directory that process would use.")
     args = ap.parse_args(argv)
+
+    if args.print_cache_dir:
+        print(Path(args.cache).resolve())
+        return 0
 
     # No PDF → cache-only mode: refresh the trust-list cache and exit. Intended
     # for a cron job, e.g. `… --refresh-cache --cache /var/cache/…/sigviewer`.

@@ -1,8 +1,4 @@
 # /etc/systemd/system/pdf_validator.service
-#
-# Runs the SigViewer web app under gunicorn, bound to localhost; nginx proxies
-# to it. SINGLE worker + threads is required: the job store and the cache lock
-# are in-process, so multiple worker *processes* would not share them.
 [Unit]
 Description=PDF Validator (SigViewer web interface)
 After=network-online.target
@@ -13,24 +9,40 @@ Type=simple
 User=www-data
 Group=www-data
 WorkingDirectory=/opt/pdf_validator
-# Writable, persistent cache for the EU Trusted Lists (default_cache_dir() uses
-# $XDG_CACHE_HOME); must be owned by the service user.
-Environment=XDG_CACHE_HOME=/var/cache/pdf_validator
-# UI language: 'en' (default), 'cs', … (must have a compiled locale/<lang> catalog)
+
+# --- Cache: persistent, writable, SHARED with the cron prefill ----------------
+# CacheDirectory creates /var/cache/pdf_validator owned by the service user. It
+# is writable even under ProtectSystem=strict (no ReadWritePaths needed) and,
+# unlike RuntimeDirectory, it SURVIVES restarts. It is a real host directory
+# (not namespaced), so the cron job writes the same files the service reads.
+CacheDirectory=pdf_validator
+CacheDirectoryMode=0750
+
+# One fixed cache path for BOTH the service and cron. This explicit value wins
+# over any $HOME/$XDG guessing, so sandboxing can't send them to different dirs.
+Environment=SIGVIEWER_CACHE_DIR=/var/cache/pdf_validator/sigviewer
 Environment=SIGVIEWER_LANG=en
+
+# --- gunicorn's own runtime state ($HOME/.gunicorn) ---------------------------
+# /var/www (www-data's home) is read-only under ProtectSystem=strict, so point
+# HOME at a throwaway /run dir. RuntimeDirectory is correct HERE (state is
+# disposable) — it must NOT hold the cache, which is why the cache now has its
+# own SIGVIEWER_CACHE_DIR above instead of following HOME.
+RuntimeDirectory=pdf_validator
+Environment=HOME=/run/pdf_validator
+
 ExecStart=/opt/pdf_validator/venv/bin/gunicorn \
     --workers 1 --threads 8 \
     --bind 127.0.0.1:8000 \
-    --timeout 120 \
+    --timeout 300 \
     webapp:app
 Restart=on-failure
 RestartSec=2
 
-# Light hardening (optional but cheap)
+# --- Hardening (CacheDirectory + RuntimeDirectory stay writable) --------------
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/var/cache/pdf_validator
 ProtectHome=true
 
 [Install]
