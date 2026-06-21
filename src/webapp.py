@@ -22,6 +22,7 @@ hit a worker that never saw the job.
 
 from __future__ import annotations
 
+import sys
 import os
 import time
 import uuid
@@ -53,6 +54,13 @@ app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB
 
 #: Port used by the built-in dev server (override with $PORT).
 PORT = int(os.environ.get("PORT", "8080"))
+
+#: Trust-list cache directory, resolved ONCE at startup (honours
+#: $SIGVIEWER_CACHE_DIR / $XDG_CACHE_HOME). Logged so `journalctl -u …` shows
+#: exactly which directory this process reads/writes — compare it to where the
+#: cron prefill writes; they must be identical.
+CACHE_DIR = os.path.abspath(default_cache_dir())
+print(f"[sigviewer] trust-list cache dir: {CACHE_DIR}", file=sys.stderr, flush=True)
 
 #: How long a finished/abandoned job is retained before pruning (seconds).
 JOB_TTL = 600
@@ -141,7 +149,7 @@ def analyze():
             "tree": None, "error": None, "created": time.time(),
         }
 
-    opts = dict(do_validate=do_validate, cache_dir=default_cache_dir())
+    opts = dict(do_validate=do_validate, cache_dir=CACHE_DIR)
     threading.Thread(target=_run_job, args=(job_id, path, opts), daemon=True).start()
     return jsonify(job_id=job_id)
 
