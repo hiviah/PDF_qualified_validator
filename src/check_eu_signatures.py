@@ -53,6 +53,14 @@ except Exception:  # pragma: no cover
         return message
 
 
+def _bool(value: bool) -> str:
+    return _("True") if value else _("False")
+
+
+def _opt(value: "str | None") -> str:
+    return value if value is not None else _("(missing)")
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Constants (OIDs, namespaces, TL service identifiers)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1219,22 +1227,22 @@ def build_signature_data(pdf_path: str, *, cache_dir: str = "cache",
                 if v.error:
                     val_rows.append((_("Validation error"), v.error))
                 val_rows += [
-                    (_("Intact (unmodified)"), str(v.intact)),
-                    (_("CMS signature valid"), str(v.valid)),
-                    (_("Chains to EU TL trust anchor"), str(v.trusted)),
-                    (_("Revoked"), str(v.revoked)),
+                    (_("Intact (unmodified)"), _bool(v.intact)),
+                    (_("CMS signature valid"), _bool(v.valid)),
+                    (_("Chains to EU TL trust anchor"), _bool(v.trusted)),
+                    (_("Revoked"), _bool(v.revoked)),
                 ]
                 entry["groups"].append({"name": _("Validation"), "rows": val_rows})
 
             qc = qc_parser.parse_signature(sig)
-            qc_rows = [(_("Present"), str(qc.has_qc_statements))]
+            qc_rows = [(_("Present"), _bool(qc.has_qc_statements))]
             if qc.has_qc_statements:
                 qc_rows += [
-                    (_("QcCompliance (is qualified)"), str(qc.qc_compliance)),
-                    (_("QcSSCD (key in secure device)"), str(qc.qc_sscd)),
-                    (_("QcType esign (natural person)"), str(qc.qct_esign)),
-                    (_("QcType eseal (legal person)"), str(qc.qct_eseal)),
-                    (_("QcType web authentication"), str(qc.qct_web)),
+                    (_("QcCompliance (is qualified)"), _bool(qc.qc_compliance)),
+                    (_("QcSSCD (key in secure device)"), _bool(qc.qc_sscd)),
+                    (_("QcType esign (natural person)"), _bool(qc.qct_esign)),
+                    (_("QcType eseal (legal person)"), _bool(qc.qct_eseal)),
+                    (_("QcType web authentication"), _bool(qc.qct_web)),
                 ]
                 if qc.statement_ids:
                     qc_rows.append((_("Statement IDs"), ", ".join(qc.statement_ids)))
@@ -1329,7 +1337,7 @@ def build_display_tree(data: dict) -> list:
         for group in sig.get("groups", []):
             group_node = {
                 "label": _disp(group["name"]),
-                "children": [{"label": _disp(f"{k}: {v}")} for k, v in group["rows"]],
+                "children": [{"label": _disp(f"{k}: {_opt(v)}")} for k, v in group["rows"]],
             }
             children.append(group_node)
 
