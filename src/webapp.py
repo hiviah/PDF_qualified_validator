@@ -121,6 +121,8 @@ def index() -> str:
         t_validate=_("Validate against EU Trusted Lists"),
         t_working=_("Working…"),
         t_fetching_lists=_("Fetching trust lists…"),
+        t_open_prompt=_("Open a PDF to validate its signatures."),
+        t_panel_title=_("Signatures & QCStatements"),
     )
 
 

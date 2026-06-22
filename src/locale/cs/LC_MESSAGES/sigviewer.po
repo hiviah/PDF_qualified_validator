@@ -156,7 +156,7 @@ msgid "Refresh trust lists"
 msgstr "Obnovit seznamy důvěry"
 
 msgid "Signatures & QCStatements"
-msgstr "Podpisy a QCStatements"
+msgstr "Podpisy a detaily (QCStatements)"
 
 msgid "PDF qualified signature validation from EU TL CA roots PyQt utility."
 msgstr "Nástroj PyQt pro ověřování kvalifikovaných podpisů PDF vůči kořenům CA z EU TL."
@@ -172,3 +172,6 @@ msgstr "Zpracovávám…"
 
 msgid "Fetching trust lists…"
 msgstr "Stahuji seznamy důvěry…"
+
+msgid "Open a PDF to validate its signatures."
+msgstr "Otevřete PDF pro ověření jeho podpisů."
