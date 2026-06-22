@@ -175,12 +175,3 @@ msgstr "Stahuji seznamy důvěry…"
 
 msgid "Open a PDF to validate its signatures."
 msgstr "Otevřete PDF pro ověření jeho podpisů."
-
-msgid "True"
-msgstr "ano"
-
-msgid "False"
-msgstr "ne"
-
-msgid "(missing)"
-msgstr "(chybí)"
