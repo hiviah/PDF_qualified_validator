@@ -1182,11 +1182,11 @@ def build_signature_data(pdf_path: str, *, cache_dir: str = "cache",
                     "count": len(certs)}
                 log(f"Collected {len(certs)} qualified CA certificate(s).")
             except Exception as e:
-                result["trust_note"] = f"EU Trusted Lists unavailable: {e} — trust not checked"
+                result["trust_note"] = _("EU Trusted Lists unavailable: %(error)s — trust not checked") % {"error": e}
                 vc = ValidationContextBuilder().build()  # empty trust store
                 log(f"Trusted List download failed: {e}")
         else:
-            result["trust_note"] = "Validation skipped (--no-validate)"
+            result["trust_note"] = _("Validation skipped (--no-validate)")
 
         for i, sig in enumerate(pdf.signatures, 1):
             entry = {"title": _("Signature #%(n)d") % {"n": i}, "field": sig.field_name,
@@ -1200,47 +1200,47 @@ def build_signature_data(pdf_path: str, *, cache_dir: str = "cache",
 
             sc = sig.signer_cert
             signer_rows = [
-                ("Common name", cert_subject_cn(sc)),
-                ("Subject", sc.subject.rfc4514_string()),
-                ("Issuer", sc.issuer.rfc4514_string()),
-                ("Serial", f"{sc.serial_number:x}"),
-                ("Valid from", str(sc.not_valid_before_utc)),
-                ("Valid until", str(sc.not_valid_after_utc)),
-                ("Chain certs", str(len(sig.chain))),
+                (_("Common name"), cert_subject_cn(sc)),
+                (_("Subject"), sc.subject.rfc4514_string()),
+                (_("Issuer"), sc.issuer.rfc4514_string()),
+                (_("Serial"), f"{sc.serial_number:x}"),
+                (_("Valid from"), str(sc.not_valid_before_utc)),
+                (_("Valid until"), str(sc.not_valid_after_utc)),
+                (_("Chain certs"), str(len(sig.chain))),
             ]
             if sig.coverage:
-                signer_rows.append(("Coverage", sig.coverage))
-            entry["groups"].append({"name": "Signer certificate", "rows": signer_rows})
+                signer_rows.append((_("Coverage"), sig.coverage))
+            entry["groups"].append({"name": _("Signer certificate"), "rows": signer_rows})
 
             # Cryptographic validation (run once, reused for the verdict)
             v = pdf.validate(sig, vc) if vc is not None else None
             if v is not None:
                 val_rows = []
                 if v.error:
-                    val_rows.append(("Validation error", v.error))
+                    val_rows.append((_("Validation error"), v.error))
                 val_rows += [
-                    ("Intact (unmodified)", str(v.intact)),
-                    ("CMS signature valid", str(v.valid)),
-                    ("Chains to EU TL trust anchor", str(v.trusted)),
-                    ("Revoked", str(v.revoked)),
+                    (_("Intact (unmodified)"), str(v.intact)),
+                    (_("CMS signature valid"), str(v.valid)),
+                    (_("Chains to EU TL trust anchor"), str(v.trusted)),
+                    (_("Revoked"), str(v.revoked)),
                 ]
-                entry["groups"].append({"name": "Validation", "rows": val_rows})
+                entry["groups"].append({"name": _("Validation"), "rows": val_rows})
 
             qc = qc_parser.parse_signature(sig)
-            qc_rows = [("Present", str(qc.has_qc_statements))]
+            qc_rows = [(_("Present"), str(qc.has_qc_statements))]
             if qc.has_qc_statements:
                 qc_rows += [
-                    ("QcCompliance (is qualified)", str(qc.qc_compliance)),
-                    ("QcSSCD (key in secure device)", str(qc.qc_sscd)),
-                    ("QcType esign (natural person)", str(qc.qct_esign)),
-                    ("QcType eseal (legal person)", str(qc.qct_eseal)),
-                    ("QcType web authentication", str(qc.qct_web)),
+                    (_("QcCompliance (is qualified)"), str(qc.qc_compliance)),
+                    (_("QcSSCD (key in secure device)"), str(qc.qc_sscd)),
+                    (_("QcType esign (natural person)"), str(qc.qct_esign)),
+                    (_("QcType eseal (legal person)"), str(qc.qct_eseal)),
+                    (_("QcType web authentication"), str(qc.qct_web)),
                 ]
                 if qc.statement_ids:
-                    qc_rows.append(("Statement IDs", ", ".join(qc.statement_ids)))
+                    qc_rows.append((_("Statement IDs"), ", ".join(qc.statement_ids)))
                 if qc.qc_type_oids:
-                    qc_rows.append(("QcType values", ", ".join(qc.qc_type_oids)))
-            entry["groups"].append({"name": "QCStatements (ETSI EN 319 412-5)", "rows": qc_rows})
+                    qc_rows.append((_("QcType values"), ", ".join(qc.qc_type_oids)))
+            entry["groups"].append({"name": _("QCStatements (ETSI EN 319 412-5)"), "rows": qc_rows})
 
             # Verdict
             if v is not None:

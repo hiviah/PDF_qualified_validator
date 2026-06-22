@@ -3,16 +3,16 @@ msgid ""
 msgstr ""
 "Project-Id-Version: SigViewer 1.0\n"
 "POT-Creation-Date: 2026-01-01 00:00+0000\n"
-"PO-Revision-Date: 2026-06-19 22:40+0200\n"
+"PO-Revision-Date: 2026-06-22 14:09+0200\n"
 "Last-Translator: SigViewer\n"
-"Language: cs\n"
 "Language-Team: cs\n"
-"Plural-Forms: nplurals=3; plural=(n==1) ? 0 : (n>=2 && n<=4) ? 1 : 2;\n"
+"Language: cs\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=3; plural=(n==1) ? 0 : (n>=2 && n<=4) ? 1 : 2;\n"
 "Generated-By: Babel 2.18.0\n"
-"X-Generator: Poedit 2.3\n"
+"X-Generator: Poedit 3.9\n"
 
 msgid "No signatures found in this PDF."
 msgstr "V tomto PDF nebyly nalezeny žádné podpisy."
@@ -27,7 +27,7 @@ msgid "Trust anchors: %(count)d qualified CA certs from EU TLs"
 msgstr "Počet kořenových CA certifikátů: %(count)d kvalifikovaných certifikátů CA z EU TL"
 
 msgid "Could not extract signer certificate"
-msgstr "Certifikát podepisující osoby se nepodařilo načíst"
+msgstr "Certifikát podepisujícího se nepodařilo načíst"
 
 msgid "QUALIFIED e-signature — natural person (eIDAS Art. 3(12))"
 msgstr "KVALIFIKOVANÝ elektronický podpis — fyzická osoba (eIDAS čl. 3 odst. 12)"
@@ -39,7 +39,7 @@ msgid "Trusted, but cert lacks a qualified-signature QCStatement"
 msgstr "Důvěryhodný, ale certifikát nemá QCStatement kvalifikovaného podpisu"
 
 msgid "Cryptographically valid, but not chaining to an EU TL anchor"
-msgstr "Kryptograficky platný, ale neřetězí se ke kotvě důvěry EU TL"
+msgstr "Kryptograficky platný, ale neřetězí se ke kořenovému kvalifikovanému EU CA certifikátu"
 
 msgid "Failed cryptographic validation (modified/invalid/revoked)"
 msgstr "Neúspěšné kryptografické ověření (změněno/neplatné/odvolané)"
@@ -49,6 +49,84 @@ msgstr "Certifikát nese QCStatements kvalifikované fyzické osoby (ověření 
 
 msgid "Validation skipped"
 msgstr "Ověření přeskočeno"
+
+msgid "Validation skipped (--no-validate)"
+msgstr "Ověření přeskočeno (--no-validate)"
+
+msgid "EU Trusted Lists unavailable: %(error)s — trust not checked"
+msgstr "Seznamy důvěry EU nedostupné: %(error)s — důvěra neověřena"
+
+msgid "Common name"
+msgstr "Obecné jméno (Common Name)"
+
+msgid "Subject"
+msgstr "Subjekt"
+
+msgid "Issuer"
+msgstr "Vydavatel"
+
+msgid "Serial"
+msgstr "Sériové číslo"
+
+msgid "Valid from"
+msgstr "Platný od"
+
+msgid "Valid until"
+msgstr "Platný do"
+
+msgid "Chain certs"
+msgstr "Certifikáty řetězce"
+
+msgid "Coverage"
+msgstr "Pokrytí"
+
+msgid "Signer certificate"
+msgstr "Certifikát podepisujícího"
+
+msgid "Validation error"
+msgstr "Chyba ověření"
+
+msgid "Intact (unmodified)"
+msgstr "Neporušený (nezměněný)"
+
+msgid "CMS signature valid"
+msgstr "Podpis CMS platný"
+
+msgid "Chains to EU TL trust anchor"
+msgstr "Řetězí ke kořenovému certifikátu EU TL"
+
+msgid "Revoked"
+msgstr "Odvolaný"
+
+msgid "Validation"
+msgstr "Ověření"
+
+msgid "Present"
+msgstr "Přítomné"
+
+msgid "QcCompliance (is qualified)"
+msgstr "QcCompliance (je kvalifikovaný)"
+
+msgid "QcSSCD (key in secure device)"
+msgstr "QcSSCD (klíč v bezpečném zařízení)"
+
+msgid "QcType esign (natural person)"
+msgstr "QcType esign (fyzická osoba)"
+
+msgid "QcType eseal (legal person)"
+msgstr "QcType eseal (právnická osoba)"
+
+msgid "QcType web authentication"
+msgstr "QcType webová autentizace"
+
+msgid "Statement IDs"
+msgstr "Statement IDs"
+
+msgid "QcType values"
+msgstr "QcType values"
+
+msgid "QCStatements (ETSI EN 319 412-5)"
+msgstr "QCStatements (ETSI EN 319 412-5)"
 
 msgid "File"
 msgstr "Soubor"
