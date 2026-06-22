@@ -119,6 +119,8 @@ def index() -> str:
         "index.html",
         t_open=_("Open PDF…"),
         t_validate=_("Validate against EU Trusted Lists"),
+        t_working=_("Working…"),
+        t_fetching_lists=_("Fetching trust lists…"),
     )
 
 

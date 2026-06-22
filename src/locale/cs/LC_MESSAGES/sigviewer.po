@@ -166,3 +166,9 @@ msgstr "Otevřít PDF…"
 
 msgid "Validate against EU Trusted Lists"
 msgstr "Ověřit vůči seznamům důvěry EU"
+
+msgid "Working…"
+msgstr "Zpracovávám…"
+
+msgid "Fetching trust lists…"
+msgstr "Stahuji seznamy důvěry…"

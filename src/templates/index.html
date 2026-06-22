@@ -19,7 +19,7 @@
 
 <main>
   <div class="progress-wrap" id="progressWrap">
-    <div class="progress-label" id="progressLabel">Working…</div>
+    <div class="progress-label" id="progressLabel">{{ t_working }}</div>
     <progress id="bar"></progress>
   </div>
 
@@ -29,7 +29,8 @@
   </div>
 </main>
 
-<script>window.APP_ROOT = "{{ request.script_root }}";</script>
+<script>window.APP_ROOT = "{{ request.script_root }}";
+window.T = { working: {{ t_working|tojson }}, fetchingLists: {{ t_fetching_lists|tojson }} };</script>
 <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

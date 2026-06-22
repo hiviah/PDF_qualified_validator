@@ -27,7 +27,7 @@ function setBusy(label) {
   bar.removeAttribute('value');           // indeterminate
 }
 function setDeterminate(done, total) {
-  progressLabel.textContent = `Fetching trust lists… ${done} / ${total}`;
+  progressLabel.textContent = `${T.fetchingLists} ${done} / ${total}`;
   bar.max = total; bar.value = done;
 }
 function hideProgress() { progressWrap.classList.remove('on'); }
@@ -49,14 +49,14 @@ function upload(file) {
 }
 
 function poll(jobId) {
-  setBusy('Working…');
+  setBusy(T.working);
   pollTimer = setInterval(() => {
     fetch(ROOT + '/status/' + jobId)
       .then(r => r.ok ? r.json() : Promise.reject('status ' + r.status))
       .then(s => {
         if (s.state === 'running') {
           if (s.total > 0) setDeterminate(s.done, s.total);
-          else setBusy('Working…');
+          else setBusy(T.working);
         } else if (s.state === 'done') {
           clearInterval(pollTimer); pollTimer = null;
           hideProgress();
