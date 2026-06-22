@@ -3,7 +3,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: SigViewer 1.0\n"
 "POT-Creation-Date: 2026-01-01 00:00+0000\n"
-"PO-Revision-Date: 2026-06-22 14:09+0200\n"
+"PO-Revision-Date: 2026-06-22 22:53+0200\n"
 "Last-Translator: SigViewer\n"
 "Language-Team: cs\n"
 "Language: cs\n"
@@ -12,7 +12,16 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=3; plural=(n==1) ? 0 : (n>=2 && n<=4) ? 1 : 2;\n"
 "Generated-By: Babel 2.18.0\n"
-"X-Generator: Poedit 3.9\n"
+"X-Generator: Poedit 2.3\n"
+
+msgid "ano"
+msgstr "ano"
+
+msgid "ne"
+msgstr "ne"
+
+msgid "(není)"
+msgstr "(není)"
 
 msgid "No signatures found in this PDF."
 msgstr "V tomto PDF nebyly nalezeny žádné podpisy."
@@ -165,13 +174,13 @@ msgid "Open PDF…"
 msgstr "Otevřít PDF…"
 
 msgid "Validate against EU Trusted Lists"
-msgstr "Ověřit vůči seznamům důvěry EU"
+msgstr "Ověřit vůči kvalifikovaným kořenovým certifikátům EU LOTL/TL"
 
 msgid "Working…"
 msgstr "Zpracovávám…"
 
 msgid "Fetching trust lists…"
-msgstr "Stahuji seznamy důvěry…"
+msgstr "Stahuji kvalifikované kořenové certifikáty EU LOTL/TL…"
 
 msgid "Open a PDF to validate its signatures."
 msgstr "Otevřete PDF pro ověření jeho podpisů."
