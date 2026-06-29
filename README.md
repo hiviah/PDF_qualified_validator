@@ -85,10 +85,10 @@ This is a shortcut so that people can set the layout and have it permanent as
 they like. If you want to reset it for some reason, use `--reset-layout` command
 line paramater.
 
-### RWLock for cache
+### Caching for web
 
-Since there is option to run the application as web application, it needed to be ensured that
-"check and download" + "check and load fresh" are atomically protected by a RWLock.
+A cron job should periodically download EU LOTL and TL lists once per 24h hours.
+This way the web service can use read-only access to cache to avoid locks.
 
 ## Translation
 
